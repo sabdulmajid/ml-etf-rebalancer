@@ -11,7 +11,20 @@ def get_price_data(start="2015-01-01", end=None):
         end = datetime.now().strftime('%Y-%m-%d')
         
     print(f"Fetching price data from {start} to {end}")
-    prices = yf.download(SECTORS, start=start, end=end)["Adj Close"]
+    data = yf.download(SECTORS, start=start, end=end)
+    
+    # Handle different column structures that yfinance might return
+    if isinstance(data.columns, pd.MultiIndex):
+        # Multi-level columns, try to get Adj Close or Close
+        if 'Adj Close' in data.columns.levels[0]:
+            prices = data['Adj Close']
+        else:
+            print("'Adj Close' not available, using 'Close' instead")
+            prices = data['Close']
+    else:
+        # Single-level columns (for single ticker)
+        prices = data
+        
     prices = prices.ffill()
     
     os.makedirs("data/raw", exist_ok=True)
@@ -21,7 +34,7 @@ def get_price_data(start="2015-01-01", end=None):
 
 def compute_monthly_returns(prices):
     """Transform daily prices into monthly returns"""
-    monthly = prices.resample("M").last()
+    monthly = prices.resample("ME").last()  # End of month frequency
     monthly_returns = monthly.pct_change().dropna()
     
     os.makedirs("data/processed", exist_ok=True)
