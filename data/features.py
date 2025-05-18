@@ -21,7 +21,7 @@ def get_features(prices, returns=None):
     
     # Relative strength calculation (sector vs market)
     if returns is not None:
-        prices_monthly = prices.resample('M').last()
+        prices_monthly = prices.resample('ME').last()  # End of month frequency
         rs6m = pd.DataFrame(index=prices_monthly.index, columns=prices_monthly.columns)
         
         for col in prices_monthly.columns:
@@ -71,7 +71,7 @@ def prepare_features_for_training(features, returns, freq='M'):
     """Align features and returns for predictive modeling"""
     # Resample to target frequency
     if freq == 'M':
-        features_resampled = features.resample('M').last()
+        features_resampled = features.resample('ME').last()  # End of month frequency
     elif freq == 'W':
         features_resampled = features.resample('W-FRI').last()
     else:
