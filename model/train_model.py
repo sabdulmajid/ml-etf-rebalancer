@@ -1,28 +1,34 @@
 import pandas as pd
 import numpy as np
-import xgboost as xgb
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 from sklearn.metrics import mean_squared_error, r2_score
 import os
 import joblib
 import datetime
 
-def train_xgb_model(X_train, y_train, ticker, params=None):
-    """Train and validate an XGBoost model for ETF return prediction"""
-    if params is None:
-        params = {
-            'n_estimators': 100,
-            'max_depth': 4,
-            'learning_rate': 0.1,
-            'subsample': 0.8,
-            'colsample_bytree': 0.8,
-            'reg_alpha': 0.01,
-            'reg_lambda': 1.0,
-            'random_state': 42
-        }
-    
+# NOTE: We're using sklearn estimators instead of XGBoost for compatibility
+# In a production environment, you would use XGBoost as it generally performs better
+
+def train_model(X_train, y_train, ticker, model_type='gbm'):
+    """Train a machine learning model for ETF return prediction"""
     print(f"Training model for {ticker}...")
-    model = xgb.XGBRegressor(**params)
+    
+    # Choose model type (using sklearn models for compatibility)
+    if model_type == 'rf':
+        model = RandomForestRegressor(
+            n_estimators=100,
+            max_depth=4,
+            random_state=42
+        )
+    else:  # default to GBM
+        model = GradientBoostingRegressor(
+            n_estimators=100,
+            max_depth=4,
+            learning_rate=0.1,
+            subsample=0.8,
+            random_state=42
+        )
     
     tscv = TimeSeriesSplit(n_splits=5)
     cv_scores = cross_val_score(
@@ -39,13 +45,13 @@ def train_xgb_model(X_train, y_train, ticker, params=None):
     
     return model
 
-def train_all_models(X, y, params=None):
-    """Train separate XGBoost models for each ETF sector"""
+def train_all_models(X, y, model_type='gbm'):
+    """Train separate ML models for each ETF sector"""
     models = {}
     feature_importances = {}
     
     for ticker in y.columns:
-        model = train_xgb_model(X, y[ticker], ticker, params)
+        model = train_model(X, y[ticker], ticker, model_type)
         models[ticker] = model
         
         importances = pd.Series(model.feature_importances_, index=X.columns)
@@ -61,9 +67,12 @@ def train_all_models(X, y, params=None):
     importances_df.to_csv(f"model/trained/feature_importances_{timestamp}.csv")
     
     latest_symlink = "model/trained/sector_models_latest.joblib"
-    if os.path.exists(latest_symlink):
-        os.remove(latest_symlink)
-    os.symlink(model_filepath, latest_symlink)
+    if os.path.exists(latest_symlink) or os.path.islink(latest_symlink):
+        if os.path.islink(latest_symlink):
+            os.unlink(latest_symlink)
+        else:
+            os.remove(latest_symlink)
+    os.symlink(os.path.abspath(model_filepath), latest_symlink)
     
     return models
 
