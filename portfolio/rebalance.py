@@ -65,8 +65,11 @@ def save_allocation(weights, timestamp=None):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     # Save as CSV
-    weights_df = pd.DataFrame(weights).T
-    weights_df.columns = ['weight']
+    if isinstance(weights, pd.Series):
+        weights_df = pd.DataFrame(weights, columns=['weight'])
+    else:
+        weights_df = pd.DataFrame(weights.items(), columns=['ticker', 'weight']).set_index('ticker')
+    
     weights_df.to_csv(f"logs/allocation_weights_{timestamp}.csv")
     
     # Also update the 'latest' allocation
