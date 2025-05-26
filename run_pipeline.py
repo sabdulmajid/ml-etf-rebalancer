@@ -73,11 +73,13 @@ def run_pipeline(backtest=True, save_artifacts=True):
         
         # Compute weights for each period
         from portfolio.rebalance import compute_weights
-        weights_df = pd.DataFrame(index=all_predictions.index)
+        weights_df = pd.DataFrame(index=all_predictions.index, columns=all_predictions.columns)
         
         for date in all_predictions.index:
             date_preds = all_predictions.loc[date]
-            weights_df.loc[date] = compute_weights(date_preds, method='simple', min_weight=0)
+            weights = compute_weights(date_preds, method='simple', min_weight=0)
+            for ticker in weights.index:
+                weights_df.loc[date, ticker] = weights[ticker]
         
         # Run backtest
         returns_series, portfolio_value = backtest(weights_df, y)
