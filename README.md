@@ -80,11 +80,23 @@ streamlit run dashboard/app.py
 
 ## Deployment
 
-This project is designed to be deployed on Streamlit's free hosting:
+This project offers multiple hosting options:
+
+### Streamlit Cloud (Recommended)
 
 1. Push to GitHub
-2. Connect your repository to Streamlit Cloud
+2. Connect your repository to [Streamlit Cloud](https://streamlit.io/cloud)
 3. Set the app path to `dashboard/app.py`
+
+### Vercel
+
+1. Push to GitHub
+2. Connect your repository to [Vercel](https://vercel.com)
+3. Use the provided `vercel.json` configuration
+
+### Self-Hosted
+
+See the [Deployment Guide](DEPLOYMENT.md) for detailed instructions on all hosting options.
 
 The GitHub Actions workflow will automatically run the rebalancing pipeline monthly.
 
