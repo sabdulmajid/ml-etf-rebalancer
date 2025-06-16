@@ -42,3 +42,28 @@ Thumbs.db
 
 # Vercel
 .vercel
+
+# Large model files and timestamped artifacts
+# Keep only the latest versions
+model/trained/sector_models_*.joblib
+model/trained/feature_importances_*.csv
+model/evaluation/model_metrics_*.csv
+model/predictions/predicted_returns_*.csv
+dashboard/model/trained/sector_models_*.joblib
+dashboard/model/trained/feature_importances_*.csv
+dashboard/model/evaluation/model_metrics_*.csv
+dashboard/model/predictions/predicted_returns_*.csv
+
+# Log files with timestamps
+logs/allocation_weights_[0-9]*.csv
+logs/portfolio_returns_*_[0-9]*.csv
+logs/portfolio_value_*_[0-9]*.csv
+dashboard/logs/allocation_weights_[0-9]*.csv
+dashboard/logs/portfolio_returns_*_[0-9]*.csv
+dashboard/logs/portfolio_value_*_[0-9]*.csv
+
+# KEEP the latest files
+!model/trained/sector_models_latest.joblib
+!logs/*_latest.csv
+!dashboard/model/trained/sector_models_latest.joblib
+!dashboard/logs/*_latest.csv
