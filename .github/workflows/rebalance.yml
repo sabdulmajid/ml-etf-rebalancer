@@ -1,0 +1,35 @@
+name: ETF Portfolio Rebalancer
+
+on:
+  schedule:
+    - cron: '0 0 1 * *'  # Run on the 1st of each month
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  rebalance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Fetch all history
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      
+      - name: Run rebalancing pipeline
+        run: python run_pipeline.py
+      
+      - name: Commit results
+        run: |
+          git config user.name 'github-actions'
+          git config user.email 'github-actions@github.com'
+          git add logs/*.csv
+          git add logs/*.png
+          git commit -m "Monthly portfolio rebalance $(date +%Y-%m-%d)" || echo "No changes to commit"
+          git push
