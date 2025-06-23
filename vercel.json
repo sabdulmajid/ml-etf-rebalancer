@@ -2,17 +2,23 @@
   "version": 2,
   "builds": [
     {
-      "src": "dashboard/api/index.py",
-      "use": "@vercel/python"
+      "src": "dashboard/index.py",
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "15mb",
+        "runtime": "python3.10"
+      }
     }
   ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "dashboard/api/index.py"
+      "dest": "dashboard/index.py"
     }
   ],
-  "env": {
-    "PYTHON_VERSION": "3.10"
-  }
+  "includeFiles": [
+    "dashboard/app.py",
+    "dashboard/requirements.txt",
+    "dashboard/api/index.py"
+  ]
 }
