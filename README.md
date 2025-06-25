@@ -93,6 +93,7 @@ This project offers multiple hosting options:
 1. Push to GitHub
 2. Connect your repository to [Vercel](https://vercel.com)
 3. Use the provided `vercel.json` configuration
+4. No additional settings required - optimized for serverless
 
 ### Self-Hosted
 
