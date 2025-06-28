@@ -1,6 +1,10 @@
 # Python
 __pycache__/
 *.py[cod]
+data/__pycache__/
+model/__pycache__/
+portfolio/__pycache__/
+dashboard/__pycache__/
 *$py.class
 *.so
 .Python
