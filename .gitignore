@@ -58,6 +58,10 @@ dashboard/model/trained/feature_importances_*.csv
 dashboard/model/evaluation/model_metrics_*.csv
 dashboard/model/predictions/predicted_returns_*.csv
 
+# Raw and processed data files
+data/raw/*.csv
+data/processed/*.csv
+
 # Log files with timestamps
 logs/allocation_weights_[0-9]*.csv
 logs/portfolio_returns_*_[0-9]*.csv
