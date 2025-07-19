@@ -193,7 +193,7 @@ st.markdown("""
 
 # Display last update time with better styling
 try:
-    allocation_path = "../logs/allocation_weights_latest.csv"
+    allocation_path = "/mount/src/ml-etf-rebalancer/logs/allocation_weights_latest.csv"
     if os.path.exists(allocation_path):
         allocation_mod_time = os.path.getmtime(allocation_path)
         st.markdown(f"""
@@ -296,8 +296,8 @@ with tab1:
     
     try:
         # Load latest allocation
-        allocation = pd.read_csv("../logs/allocation_weights_latest.csv", index_col=0)
-        
+        allocation = pd.read_csv("/mount/src/ml-etf-rebalancer/logs/allocation_weights_latest.csv", index_col=0)
+
         # Format allocation for display
         allocation = allocation.reset_index()
         allocation.columns = ["Sector ETF", "Weight"]
@@ -387,12 +387,12 @@ with tab2:
     
     try:
         # Load portfolio value history
-        portfolio_value = pd.read_csv("../logs/portfolio_value_ml_strategy_latest.csv", 
+        portfolio_value = pd.read_csv("/mount/src/ml-etf-rebalancer/logs/portfolio_value_ml_strategy_latest.csv", 
                                      index_col=0, parse_dates=True)
         
         # Performance metrics
-        metrics = pd.read_csv("../logs/performance_metrics_ml_strategy_latest.csv", index_col=0)
-        
+        metrics = pd.read_csv("/mount/src/ml-etf-rebalancer/logs/performance_metrics_ml_strategy_latest.csv", index_col=0)
+
         # Scale portfolio values based on initial investment
         portfolio_value_scaled = portfolio_value * (initial_investment / 10000)  # Assuming base was $10,000
         
@@ -553,7 +553,7 @@ with tab2:
         # Try to load comparison data if available
         try:
             # Check if strategy comparison image exists
-            comparison_img = "../logs/strategy_comparison.png"
+            comparison_img = "/mount/src/ml-etf-rebalancer/logs/strategy_comparison.png"
             if os.path.exists(comparison_img):
                 st.markdown('<h3 style="color: #f8fafc; margin-top: 2rem; margin-bottom: 1rem;">Benchmark Comparison</h3>', unsafe_allow_html=True)
                 st.image(comparison_img)
