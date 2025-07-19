@@ -574,11 +574,11 @@ with tab3:
     
     try:
         # Load feature importances
-        feature_files = [f for f in os.listdir("../model/trained") if f.startswith("feature_importances")]
+        feature_files = [f for f in os.listdir("/mount/src/ml-etf-rebalancer/model/trained") if f.startswith("feature_importances")]
         
         if feature_files:
-            latest_file = max(feature_files, key=lambda x: os.path.getctime(f"../model/trained/{x}"))
-            importances = pd.read_csv(f"../model/trained/{latest_file}")
+            latest_file = max(feature_files, key=lambda x: os.path.getctime(f"/mount/src/ml-etf-rebalancer/model/trained/{x}"))
+            importances = pd.read_csv(f"/mount/src/ml-etf-rebalancer/model/trained/{latest_file}")
             
             # Select sector for feature importance
             st.markdown('<h3 style="color: #f8fafc; margin-bottom: 1rem;">🎯 Feature Importance Analysis</h3>', unsafe_allow_html=True)
@@ -634,11 +634,11 @@ with tab3:
             
             # Model evaluation metrics
             try:
-                eval_files = [f for f in os.listdir("../model/evaluation") if f.startswith("model_metrics")]
+                eval_files = [f for f in os.listdir("/mount/src/ml-etf-rebalancer/model/evaluation") if f.startswith("model_metrics")]
                 if eval_files:
-                    latest_eval = max(eval_files, key=lambda x: os.path.getctime(f"../model/evaluation/{x}"))
-                    metrics = pd.read_csv(f"../model/evaluation/{latest_eval}")
-                    
+                    latest_eval = max(eval_files, key=lambda x: os.path.getctime(f"/mount/src/ml-etf-rebalancer/model/evaluation/{x}"))
+                    metrics = pd.read_csv(f"/mount/src/ml-etf-rebalancer/model/evaluation/{latest_eval}")
+
                     st.markdown('<h3 style="color: #f8fafc; margin-top: 2rem; margin-bottom: 1rem;">🎯 Model Performance by Sector</h3>', unsafe_allow_html=True)
                     
                     # Create two columns for metrics table and RMSE chart
