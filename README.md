@@ -1,10 +1,10 @@
 # ML-Powered ETF Rebalancer
 
-A machine learning system for sector ETF allocation and automated portfolio rebalancing.
+A machine learning system for sector ETF allocation and automated portfolio rebalancing. You can access the live website [here](https://etf-rebalancer.streamlit.app/)!
 
 ## Overview
 
-This project uses machine learning to predict sector ETF performance and automatically rebalance a portfolio based on those predictions. The system is fully automated with GitHub Actions and hosted on Streamlit.
+This project uses machine learning to predict sector ETF performance and automatically rebalance a portfolio based on those predictions. The system is hosted on [Streamlit](https://etf-rebalancer.streamlit.app/).
 
 ## Features
 
@@ -24,8 +24,6 @@ This project uses machine learning to predict sector ETF performance and automat
 | ML & Backend | Python, xgboost, scikit-learn | Predictive modeling |
 | Visualization | Streamlit, Plotly | Interactive dashboard |
 | Storage | CSV/Parquet | Flat file storage |
-| Automation | GitHub Actions | Monthly rebalancing |
-| Hosting | Streamlit Cloud | Free hosting |
 
 ## Project Structure
 
@@ -47,11 +45,6 @@ ml-etf-rebalancer/
 ```
 
 ## Getting Started
-
-### Prerequisites
-
-- Python 3.8+
-- pip
 
 ### Installation
 
@@ -77,33 +70,6 @@ python run_pipeline.py
 ```bash
 streamlit run dashboard/app.py
 ```
-
-## Deployment
-
-This project offers multiple hosting options:
-
-### Streamlit Cloud (Recommended)
-
-1. Push to GitHub
-2. Connect your repository to [Streamlit Cloud](https://streamlit.io/cloud)
-3. Set the app path to `dashboard/app.py`
-
-### Vercel
-
-1. Push to GitHub
-2. Connect your repository to [Vercel](https://vercel.com)
-3. Use the provided `vercel.json` configuration
-4. No additional settings required - optimized for serverless
-
-### Self-Hosted
-
-See the [Deployment Guide](DEPLOYMENT.md) for detailed instructions on all hosting options.
-
-The GitHub Actions workflow will automatically run the rebalancing pipeline monthly.
-
-## License
-
-MIT
 
 ## Disclaimer
 
