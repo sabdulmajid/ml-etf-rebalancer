@@ -1,77 +1,38 @@
 # Python
 __pycache__/
 *.py[cod]
-data/__pycache__/
-model/__pycache__/
-portfolio/__pycache__/
-dashboard/__pycache__/
 *$py.class
 *.so
 .Python
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
+.pytest_cache/
 
-# Virtual Environment
+# Virtual environments
 .env
 .venv
 env/
 venv/
 ENV/
 
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IDE files
+# Local notebooks and editors
+.ipynb_checkpoints/
 .idea/
 .vscode/
 *.swp
 *.swo
-
-# OS specific files
 .DS_Store
 Thumbs.db
 
-# Vercel
-.vercel
+# Local/generated research scratch space
+data/raw/
+data/processed/
+artifacts/archive/
+artifacts/tmp/
+logs/
+model/
 
-# Large model files and timestamped artifacts
-# Keep only the latest versions
-model/trained/sector_models_*.joblib
-model/trained/feature_importances_*.csv
-model/evaluation/model_metrics_*.csv
-model/predictions/predicted_returns_*.csv
-dashboard/model/trained/sector_models_*.joblib
-dashboard/model/trained/feature_importances_*.csv
-dashboard/model/evaluation/model_metrics_*.csv
-dashboard/model/predictions/predicted_returns_*.csv
-
-# Raw and processed data files
-data/raw/*.csv
-data/processed/*.csv
-
-# Log files with timestamps
-logs/allocation_weights_[0-9]*.csv
-logs/portfolio_returns_*_[0-9]*.csv
-logs/portfolio_value_*_[0-9]*.csv
-dashboard/logs/allocation_weights_[0-9]*.csv
-dashboard/logs/portfolio_returns_*_[0-9]*.csv
-dashboard/logs/portfolio_value_*_[0-9]*.csv
-
-# KEEP the latest files
-!model/trained/sector_models_latest.joblib
-!logs/*_latest.csv
-!dashboard/model/trained/sector_models_latest.joblib
-!dashboard/logs/*_latest.csv
+# Deployment provider state
+.streamlit/secrets.toml
+.vercel/

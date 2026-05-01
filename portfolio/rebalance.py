@@ -1,7 +1,5 @@
 import pandas as pd
 import numpy as np
-import os
-from datetime import datetime
 
 def _apply_max_weight(weights, max_weight):
     """Normalize long-only weights while respecting a per-asset cap."""
@@ -109,55 +107,3 @@ def generate_rebalance_orders(current_weights, target_weights, min_trade_size=0.
         })
     
     return pd.DataFrame(orders)
-
-def save_allocation(weights, timestamp=None):
-    """Save portfolio allocation weights to file"""
-    os.makedirs("logs", exist_ok=True)
-    
-    if timestamp is None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    # Save as CSV
-    if isinstance(weights, pd.Series):
-        weights_df = pd.DataFrame(weights, columns=['weight'])
-    else:
-        weights_df = pd.DataFrame(weights.items(), columns=['ticker', 'weight']).set_index('ticker')
-    
-    weights_df.to_csv(f"logs/allocation_weights_{timestamp}.csv")
-    
-    # Also update the 'latest' allocation
-    weights_df.to_csv("logs/allocation_weights_latest.csv")
-    
-    return weights_df
-
-if __name__ == "__main__":
-    from model.train_model import load_models, predict_returns
-    from data.fetch_data import load_or_fetch_data
-    from data.features import get_features, prepare_features_for_training
-    
-    # Load latest data
-    prices, returns = load_or_fetch_data()
-    features = get_features(prices)
-    
-    # Get the latest feature data point
-    latest_features = features.iloc[[-1]]
-    
-    # Load trained models
-    models = load_models()
-    
-    # Generate predictions
-    preds = {}
-    for ticker, model in models.items():
-        preds[ticker] = model.predict(latest_features)[0]
-    
-    pred_series = pd.Series(preds)
-    print("Predicted returns:")
-    print(pred_series)
-    
-    # Compute allocation weights
-    weights = compute_weights(pred_series, method='simple', min_weight=0, max_weight=0.3)
-    print("\nPortfolio allocation:")
-    print(weights)
-    
-    # Save allocation
-    save_allocation(weights)

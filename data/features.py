@@ -1,6 +1,5 @@
 import pandas as pd
 import numpy as np
-import os
 
 def get_features(prices, returns=None):
     """Generate technical indicators for ETF trading strategy"""
@@ -55,12 +54,7 @@ def get_features(prices, returns=None):
         df.columns = [f"{prefix}_{col}" for col in df.columns]
         all_features = all_features.join(df)
     
-    all_features = all_features.dropna()
-    
-    os.makedirs("data/processed", exist_ok=True)
-    all_features.to_csv("data/processed/features.csv")
-    
-    return all_features
+    return all_features.dropna()
 
 def add_macro_features(features, start_date=None, end_date=None):
     """Future extension point for macroeconomic indicators like rates, inflation, etc."""
@@ -87,15 +81,3 @@ def prepare_features_for_training(features, returns, freq='M'):
     y = y.loc[X.index]
     
     return X, y
-
-if __name__ == "__main__":
-    from fetch_data import load_or_fetch_data
-    
-    prices, returns = load_or_fetch_data()
-    features = get_features(prices, returns)
-    
-    print(f"Generated features shape: {features.shape}")
-    print(f"Sample features:\n{features.tail(3)}")
-    
-    X, y = prepare_features_for_training(features, returns)
-    print(f"Training data shapes: X = {X.shape}, y = {y.shape}")
