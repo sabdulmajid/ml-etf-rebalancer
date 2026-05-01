@@ -1,6 +1,8 @@
 from pathlib import Path
 import json
+import sys
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -8,6 +10,10 @@ import streamlit as st
 
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACT_DIR = ROOT / "artifacts" / "latest"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from portfolio.rebalance import compute_weights
 
 
 st.set_page_config(
@@ -275,7 +281,7 @@ def plot_equity(equity, selected):
         yaxis=dict(gridcolor="rgba(23,33,31,0.12)", tickprefix="$"),
         hovermode="x unified",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def plot_drawdown(drawdowns, selected):
@@ -301,7 +307,7 @@ def plot_drawdown(drawdowns, selected):
         yaxis=dict(gridcolor="rgba(23,33,31,0.12)", tickformat=".0%"),
         showlegend=False,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def plot_allocation(allocation):
@@ -328,7 +334,7 @@ def plot_allocation(allocation):
         yaxis=dict(showgrid=False),
         showlegend=False,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def plot_feature_importance(features):
@@ -351,7 +357,85 @@ def plot_feature_importance(features):
         xaxis=dict(gridcolor="rgba(23,33,31,0.12)"),
         yaxis=dict(showgrid=False),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
+
+
+def normalize_percentages(frame, column):
+    values = pd.to_numeric(frame[column], errors="coerce").fillna(0.0).clip(lower=0.0)
+    total = values.sum()
+    if total <= 0:
+        return pd.Series(0.0, index=frame.index)
+    return values / total
+
+
+def build_trade_ticket(current_weights, target_weights, portfolio_value, min_trade_dollars=100):
+    ticket = pd.DataFrame(
+        {
+            "ticker": target_weights.index,
+            "current_weight": current_weights.reindex(target_weights.index).fillna(0.0),
+            "target_weight": target_weights,
+        }
+    )
+    ticket["trade_weight"] = ticket["target_weight"] - ticket["current_weight"]
+    ticket["trade_dollars"] = ticket["trade_weight"] * portfolio_value
+    ticket["action"] = np.where(ticket["trade_dollars"] > 0, "BUY", "SELL")
+    ticket.loc[ticket["trade_dollars"].abs() < min_trade_dollars, "action"] = "HOLD"
+    return ticket.sort_values("trade_dollars", key=lambda s: s.abs(), ascending=False)
+
+
+def static_portfolio_return(monthly_returns, weights):
+    aligned = weights.reindex(monthly_returns.columns).fillna(0.0)
+    returns = monthly_returns.mul(aligned, axis=1).sum(axis=1)
+    return (1 + returns).prod() - 1
+
+
+def scenario_table(monthly_returns, strategy_returns, target_weights):
+    latest_end = monthly_returns.index.max()
+    scenarios = {
+        "COVID Shock": ("2020-02-29", "2020-03-31"),
+        "Inflation Bear": ("2022-01-31", "2022-10-31"),
+        "AI Rally": ("2023-01-31", "2023-12-31"),
+        "Last 12 Months": ((latest_end - pd.DateOffset(months=11)).strftime("%Y-%m-%d"), latest_end.strftime("%Y-%m-%d")),
+    }
+    rows = []
+    for name, (start, end) in scenarios.items():
+        period_returns = monthly_returns.loc[start:end]
+        period_strategy = strategy_returns.loc[start:end]
+        if period_returns.empty or period_strategy.empty:
+            continue
+        rows.append(
+            {
+                "Scenario": name,
+                "Start": period_returns.index.min().strftime("%Y-%m-%d"),
+                "End": period_returns.index.max().strftime("%Y-%m-%d"),
+                "Current Target": static_portfolio_return(period_returns, target_weights),
+                "ML Signal Blend": (1 + period_strategy["ML Signal Blend"]).prod() - 1,
+                "SPY Buy & Hold": (1 + period_strategy["SPY Buy & Hold"]).prod() - 1,
+                "Equal-Weight Sectors": (1 + period_strategy["Equal-Weight Sectors"]).prod() - 1,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def remix_allocation(allocation, forecast_weight, momentum_weight, stability_weight, max_weight, top_n):
+    total = forecast_weight + momentum_weight + stability_weight
+    if total <= 0:
+        forecast_weight, momentum_weight, stability_weight = 0.4, 0.45, 0.15
+        total = 1.0
+    score = (
+        forecast_weight / total * allocation["forecast_score"]
+        + momentum_weight / total * allocation["momentum_score"]
+        + stability_weight / total * allocation["stability_score"]
+    )
+    score = score - score.min()
+    weights = compute_weights(
+        pd.Series(score.values, index=allocation["ticker"]),
+        method="simple",
+        min_weight=0.0,
+        max_weight=max_weight,
+        top_n=top_n,
+    )
+    return weights
 
 
 data = load_artifacts()
@@ -362,6 +446,15 @@ equity = data["equity"]
 drawdowns = data["drawdowns"]
 annual = data["annual"]
 features = data["features"]
+monthly_returns = data["returns"].copy()
+strategy_returns = data["returns"].copy()
+
+sector_columns = list(manifest["universe"].keys())
+monthly_sector_returns = pd.read_csv(
+    ARTIFACT_DIR / "monthly_returns.csv",
+    index_col=0,
+    parse_dates=True,
+).reindex(columns=sector_columns)
 
 
 with st.sidebar:
@@ -439,7 +532,7 @@ with col4:
     metric_card("Max drawdown", pct(primary["Max Drawdown"]), "largest peak-to-trough loss")
 
 
-tab_allocation, tab_backtest, tab_research = st.tabs(["Current Allocation", "Backtest", "Research Notes"])
+tab_allocation, tab_backtest, tab_lab, tab_research = st.tabs(["Current Allocation", "Backtest", "Portfolio Lab", "Research Notes"])
 
 
 with tab_allocation:
@@ -473,7 +566,7 @@ with tab_allocation:
             composite_score=allocation["composite_score"].map(lambda x: f"{x:.2f}"),
         ),
         hide_index=True,
-        use_container_width=True,
+        width='stretch',
     )
 
     st.download_button(
@@ -497,12 +590,118 @@ with tab_backtest:
             display_metrics[col] = display_metrics[col].map(lambda x: "" if pd.isna(x) else f"{x:.2%}")
     if "Sharpe Ratio" in display_metrics:
         display_metrics["Sharpe Ratio"] = display_metrics["Sharpe Ratio"].map(lambda x: f"{float(x):.2f}")
-    st.dataframe(display_metrics, use_container_width=True)
+    st.dataframe(display_metrics, width='stretch')
 
     st.markdown("## Annual Returns")
     annual_display = annual.copy()
     annual_display.index = annual_display.index.astype(str)
-    st.dataframe(annual_display.style.format("{:.2%}"), use_container_width=True)
+    st.dataframe(annual_display.style.format("{:.2%}"), width='stretch')
+
+
+with tab_lab:
+    st.markdown("## Portfolio Lab")
+    st.markdown(
+        """
+        Use this as a recruiter-facing sandbox: enter a current allocation, generate a trade ticket,
+        remix the signal recipe, and stress-test the target portfolio across real historical regimes.
+        """
+    )
+
+    lab_left, lab_right = st.columns([1, 1])
+    base_current = allocation[["ticker", "sector", "weight"]].copy()
+    current_mode = lab_left.radio(
+        "Starting portfolio",
+        ["Equal weight", "Current signal", "Cash / no ETF exposure"],
+        horizontal=True,
+    )
+    if current_mode == "Equal weight":
+        base_current["current_weight_pct"] = 100 / len(base_current)
+    elif current_mode == "Current signal":
+        base_current["current_weight_pct"] = base_current["weight"] * 100
+    else:
+        base_current["current_weight_pct"] = 0.0
+
+    with lab_left:
+        edited = st.data_editor(
+            base_current[["ticker", "sector", "current_weight_pct"]],
+            column_config={
+                "current_weight_pct": st.column_config.NumberColumn(
+                    "Current weight (%)",
+                    min_value=0.0,
+                    max_value=100.0,
+                    step=0.5,
+                    format="%.2f",
+                )
+            },
+            hide_index=True,
+            width='stretch',
+        )
+
+    target_weights = allocation.set_index("ticker")["weight"]
+    current_weights = normalize_percentages(edited, "current_weight_pct")
+    current_weights.index = edited["ticker"]
+    ticket = build_trade_ticket(current_weights, target_weights, initial_capital)
+
+    with lab_right:
+        turnover = ticket["trade_weight"].abs().sum()
+        largest_trade = ticket["trade_dollars"].abs().max()
+        estimated_cost = turnover * manifest.get("transaction_cost_bps", 0) / 10000 * initial_capital
+        metric_card("Turnover to target", pct(turnover), "sum of absolute weight changes")
+        metric_card("Largest ticket", money(largest_trade), "largest buy/sell notional")
+        metric_card("Estimated cost", money(estimated_cost), f"{manifest.get('transaction_cost_bps', 0):.0f} bps per dollar traded")
+
+    ticket_display = ticket.copy()
+    for col in ["current_weight", "target_weight", "trade_weight"]:
+        ticket_display[col] = ticket_display[col].map(lambda x: f"{x:.2%}")
+    ticket_display["trade_dollars"] = ticket_display["trade_dollars"].map(lambda x: f"${x:,.0f}")
+    st.markdown("## Trade Ticket")
+    st.dataframe(ticket_display, hide_index=True, width='stretch')
+    st.download_button(
+        "Download trade ticket CSV",
+        ticket.to_csv(index=False),
+        file_name="etf_signal_trade_ticket.csv",
+        mime="text/csv",
+    )
+
+    st.markdown("## Signal Remix")
+    remix_cols = st.columns(5)
+    forecast_mix = remix_cols[0].slider("Forecast", 0.0, 1.0, float(manifest["signal_weights"]["forecast"]), 0.05)
+    momentum_mix = remix_cols[1].slider("Momentum", 0.0, 1.0, float(manifest["signal_weights"]["momentum"]), 0.05)
+    stability_mix = remix_cols[2].slider("Stability", 0.0, 1.0, float(manifest["signal_weights"]["stability"]), 0.05)
+    remix_max = remix_cols[3].slider("Max sector", 0.15, 0.60, float(manifest["max_weight"]), 0.05)
+    remix_top_n = remix_cols[4].slider("Active sectors", 2, len(sector_columns), int(manifest["top_n"]), 1)
+    remix_weights = remix_allocation(allocation, forecast_mix, momentum_mix, stability_mix, remix_max, remix_top_n)
+    remix_df = allocation[["ticker", "sector"]].copy()
+    remix_df["remixed_weight"] = remix_df["ticker"].map(remix_weights).fillna(0.0)
+
+    remix_fig = go.Figure(
+        go.Bar(
+            x=remix_df.sort_values("remixed_weight")["remixed_weight"],
+            y=remix_df.sort_values("remixed_weight")["sector"] + " (" + remix_df.sort_values("remixed_weight")["ticker"] + ")",
+            orientation="h",
+            marker=dict(color="#4b6f8f"),
+            text=[pct(x) for x in remix_df.sort_values("remixed_weight")["remixed_weight"]],
+            textposition="outside",
+        )
+    )
+    remix_fig.update_layout(
+        height=360,
+        margin=dict(l=10, r=50, t=10, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(255,250,240,0.45)",
+        font=dict(family="IBM Plex Mono", color="#17211f"),
+        xaxis=dict(tickformat=".0%", gridcolor="rgba(23,33,31,0.12)", range=[0, max(0.4, remix_df["remixed_weight"].max() * 1.18)]),
+        yaxis=dict(showgrid=False),
+        showlegend=False,
+    )
+    st.plotly_chart(remix_fig, width='stretch')
+
+    st.markdown("## Stress Test")
+    scenarios = scenario_table(monthly_sector_returns, strategy_returns, target_weights)
+    scenario_display = scenarios.copy()
+    for col in ["Current Target", "ML Signal Blend", "SPY Buy & Hold", "Equal-Weight Sectors"]:
+        scenario_display[col] = scenario_display[col].map(lambda x: f"{x:.2%}")
+    st.dataframe(scenario_display, hide_index=True, width='stretch')
 
 
 with tab_research:

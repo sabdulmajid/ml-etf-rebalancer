@@ -351,6 +351,7 @@ def build_research_artifacts(config=ResearchConfig()):
             "sector": [SECTOR_ETFS[ticker] for ticker in current_weights.index],
             "weight": current_weights.values,
             "predicted_return": latest_predictions.reindex(current_weights.index).values,
+            "forecast_score": latest_scores["forecast_z"].reindex(current_weights.index).values,
             "composite_score": latest_scores["composite_score"].reindex(current_weights.index).values,
             "momentum_score": latest_scores["momentum_z"].reindex(current_weights.index).values,
             "stability_score": latest_scores["stability_z"].reindex(current_weights.index).values,

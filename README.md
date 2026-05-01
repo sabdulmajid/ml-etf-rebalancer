@@ -14,6 +14,7 @@ The result is a useful research application, not a toy chart:
 - Walk-forward backtest from 2015 through the latest available month
 - Benchmarks against SPY, equal-weight sectors, and a simple momentum strategy
 - Drawdown, CAGR, Sharpe, annual returns, turnover, and model-driver views
+- Portfolio Lab for editable current holdings, trade-ticket generation, signal remixing, and stress tests
 - Read-only Streamlit dashboard backed by committed `artifacts/latest` data
 
 ## Quickstart
@@ -34,6 +35,15 @@ python run_pipeline.py
 streamlit run dashboard/app.py
 ```
 
+Useful local commands:
+
+```bash
+make test        # run validation tests
+make benchmark   # refresh artifacts and benchmark local health
+make refresh     # rebuild artifacts only
+make app         # launch the dashboard
+```
+
 ## Methodology
 
 Universe: `XLB`, `XLE`, `XLF`, `XLI`, `XLK`, `XLP`, `XLU`, `XLV`, `XLY`
@@ -48,6 +58,15 @@ The pipeline:
 4. Blends model forecast, six-month momentum, and inverse-volatility stability signals.
 5. Constructs a long-only portfolio with top-sector selection and max-weight constraints.
 6. Applies transaction costs and exports stable artifacts for the dashboard.
+
+## Validation
+
+The repository includes lightweight tests for the portfolio allocator, artifact schema, strategy outputs, and dashboard smoke execution:
+
+```bash
+pytest -q
+python tools/benchmark.py --pipeline
+```
 
 ## Project Structure
 
