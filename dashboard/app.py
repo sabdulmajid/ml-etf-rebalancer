@@ -206,7 +206,9 @@ def load_artifacts():
 
     metrics = read_csv("metrics.csv", index_col=0)
     for col in metrics.columns:
-        metrics[col] = pd.to_numeric(metrics[col], errors="ignore")
+        converted = pd.to_numeric(metrics[col], errors="coerce")
+        if converted.notna().any():
+            metrics[col] = converted.where(converted.notna(), metrics[col])
 
     return {
         "manifest": manifest,
