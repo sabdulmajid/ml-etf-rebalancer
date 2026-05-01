@@ -1,0 +1,33 @@
+{
+  "generated_at_utc": "2026-05-01T07:02:51+00:00",
+  "data_start": "2010-01-04",
+  "data_end": "2026-04-30",
+  "backtest_start": "2015-01-31",
+  "backtest_end": "2026-04-30",
+  "latest_signal_date": "2026-04-30",
+  "universe": {
+    "XLB": "Materials",
+    "XLE": "Energy",
+    "XLF": "Financials",
+    "XLI": "Industrials",
+    "XLK": "Technology",
+    "XLP": "Consumer Staples",
+    "XLU": "Utilities",
+    "XLV": "Health Care",
+    "XLY": "Consumer Discretionary"
+  },
+  "benchmark": "SPY",
+  "methodology": "Walk-forward monthly retraining. Each rebalance uses only data available before the predicted month. Allocation blends model forecasts, trailing momentum, and volatility discipline.",
+  "transaction_cost_bps": 8.0,
+  "max_weight": 0.35,
+  "top_n": 4,
+  "signal_weights": {
+    "forecast": 0.4,
+    "momentum": 0.45,
+    "stability": 0.15
+  },
+  "initial_value": 10000.0,
+  "git_sha": "9da9eb6",
+  "python": "3.13.5",
+  "pandas": "3.0.2"
+}
