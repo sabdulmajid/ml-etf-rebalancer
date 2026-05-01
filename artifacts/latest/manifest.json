@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-05-01T07:02:51+00:00",
+  "generated_at_utc": "2026-05-01T07:09:21+00:00",
   "data_start": "2010-01-04",
   "data_end": "2026-04-30",
   "backtest_start": "2015-01-31",
@@ -27,7 +27,7 @@
     "stability": 0.15
   },
   "initial_value": 10000.0,
-  "git_sha": "9da9eb6",
+  "git_sha": "5ebe6fb",
   "python": "3.13.5",
   "pandas": "3.0.2"
 }
