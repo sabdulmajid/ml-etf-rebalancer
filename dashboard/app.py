@@ -14,10 +14,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from portfolio.rebalance import compute_weights
+from dashboard.workbench import render_portfolio_lab, render_workbench
 
 
 st.set_page_config(
-    page_title="ETF Signal Lab",
+    page_title="ETF Research Studio",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -26,8 +27,6 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Newsreader:opsz,wght@6..72,500;6..72,650&display=swap');
-
     :root {
         --ink: #17211f;
         --muted: #63706b;
@@ -446,19 +445,13 @@ equity = data["equity"]
 drawdowns = data["drawdowns"]
 annual = data["annual"]
 features = data["features"]
-monthly_returns = data["returns"].copy()
-strategy_returns = data["returns"].copy()
 
 sector_columns = list(manifest["universe"].keys())
-monthly_sector_returns = pd.read_csv(
-    ARTIFACT_DIR / "monthly_returns.csv",
-    index_col=0,
-    parse_dates=True,
-).reindex(columns=sector_columns)
 
 
 with st.sidebar:
-    st.markdown("### Terminal Controls")
+    st.markdown("### ML Research Controls")
+    st.caption("These controls apply only to the existing ML research tabs.")
     initial_capital = st.number_input(
         "Portfolio value",
         min_value=1000,
@@ -501,19 +494,18 @@ primary_final = scaled_equity["ML Signal Blend"].iloc[-1]
 st.markdown(
     f"""
     <div class="hero">
-        <div class="eyebrow">Walk-forward ETF sector research terminal</div>
-        <h1 class="hero-title">ETF Signal Lab</h1>
+        <div class="eyebrow">Transparent ETF portfolio research</div>
+        <h1 class="hero-title">ETF Research Studio</h1>
         <div class="hero-copy">
-            A disciplined sector-rotation dashboard that blends machine-learning return forecasts,
-            trailing momentum, and volatility discipline. The backtest is walk-forward: every rebalance
-            is generated from models trained only on data available before that month.
+            Explore fixed, explainable ETF allocation policies and inspect the existing walk-forward
+            machine-learning sector study. Both experiences use committed, reviewable artifacts and
+            are educational analytics only; this application never places orders.
         </div>
         <div class="pill-row">
-            <div class="pill">Data through {manifest["data_end"]}</div>
-            <div class="pill">Backtest {manifest["backtest_start"]} to {manifest["backtest_end"]}</div>
-            <div class="pill">Universe: {len(manifest["universe"])} sector ETFs</div>
-            <div class="pill">Benchmark: {manifest["benchmark"]}</div>
-            <div class="pill">Generated {manifest["generated_at_utc"]}</div>
+            <div class="pill">Allocation Workbench: 14 curated ETFs</div>
+            <div class="pill">ML study through {manifest["data_end"]}</div>
+            <div class="pill">Local committed artifacts</div>
+            <div class="pill">No brokerage connection</div>
         </div>
     </div>
     """,
@@ -521,21 +513,33 @@ st.markdown(
 )
 
 
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    metric_card("Current value", money(primary_final), f"on {money(initial_capital)} initial capital")
-with col2:
-    metric_card("CAGR", pct(primary["CAGR"]), "walk-forward signal blend")
-with col3:
-    metric_card("Sharpe", f"{float(primary['Sharpe Ratio']):.2f}", "0% risk-free assumption")
-with col4:
-    metric_card("Max drawdown", pct(primary["Max Drawdown"]), "largest peak-to-trough loss")
+tab_workbench, tab_allocation, tab_backtest, tab_lab, tab_research = st.tabs(
+    [
+        "ETF Allocation Workbench",
+        "ML Current Allocation",
+        "ML Backtest",
+        "Portfolio Lab",
+        "ML Research Notes",
+    ]
+)
 
 
-tab_allocation, tab_backtest, tab_lab, tab_research = st.tabs(["Current Allocation", "Backtest", "Portfolio Lab", "Research Notes"])
+with tab_workbench:
+    render_workbench()
 
 
 with tab_allocation:
+    st.markdown("### ML sector model snapshot")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        metric_card("Current value", money(primary_final), f"on {money(initial_capital)} initial capital")
+    with col2:
+        metric_card("CAGR", pct(primary["CAGR"]), "walk-forward signal blend")
+    with col3:
+        metric_card("Sharpe", f"{float(primary['Sharpe Ratio']):.2f}", "0% risk-free assumption")
+    with col4:
+        metric_card("Max drawdown", pct(primary["Max Drawdown"]), "largest peak-to-trough loss")
+
     left, right = st.columns([1.35, 1])
     with left:
         st.markdown("## Current Allocation")
@@ -599,109 +603,12 @@ with tab_backtest:
 
 
 with tab_lab:
-    st.markdown("## Portfolio Lab")
-    st.markdown(
-        """
-        Use this as a recruiter-facing sandbox: enter a current allocation, generate a trade ticket,
-        remix the signal recipe, and stress-test the target portfolio across real historical regimes.
-        """
+    render_portfolio_lab()
+    st.caption(
+        "The hindsight Stress Test remains removed because applying a current target "
+        "to past regimes is semantically misleading. The exploratory Signal Remix is "
+        "isolated in ML Research Notes and cannot control this ticket."
     )
-
-    lab_left, lab_right = st.columns([1, 1])
-    base_current = allocation[["ticker", "sector", "weight"]].copy()
-    current_mode = lab_left.radio(
-        "Starting portfolio",
-        ["Equal weight", "Current signal", "Cash / no ETF exposure"],
-        horizontal=True,
-    )
-    if current_mode == "Equal weight":
-        base_current["current_weight_pct"] = 100 / len(base_current)
-    elif current_mode == "Current signal":
-        base_current["current_weight_pct"] = base_current["weight"] * 100
-    else:
-        base_current["current_weight_pct"] = 0.0
-
-    with lab_left:
-        edited = st.data_editor(
-            base_current[["ticker", "sector", "current_weight_pct"]],
-            column_config={
-                "current_weight_pct": st.column_config.NumberColumn(
-                    "Current weight (%)",
-                    min_value=0.0,
-                    max_value=100.0,
-                    step=0.5,
-                    format="%.2f",
-                )
-            },
-            hide_index=True,
-            width='stretch',
-        )
-
-    target_weights = allocation.set_index("ticker")["weight"]
-    current_weights = normalize_percentages(edited, "current_weight_pct")
-    current_weights.index = edited["ticker"]
-    ticket = build_trade_ticket(current_weights, target_weights, initial_capital)
-
-    with lab_right:
-        turnover = ticket["trade_weight"].abs().sum()
-        largest_trade = ticket["trade_dollars"].abs().max()
-        estimated_cost = turnover * manifest.get("transaction_cost_bps", 0) / 10000 * initial_capital
-        metric_card("Turnover to target", pct(turnover), "sum of absolute weight changes")
-        metric_card("Largest ticket", money(largest_trade), "largest buy/sell notional")
-        metric_card("Estimated cost", money(estimated_cost), f"{manifest.get('transaction_cost_bps', 0):.0f} bps per dollar traded")
-
-    ticket_display = ticket.copy()
-    for col in ["current_weight", "target_weight", "trade_weight"]:
-        ticket_display[col] = ticket_display[col].map(lambda x: f"{x:.2%}")
-    ticket_display["trade_dollars"] = ticket_display["trade_dollars"].map(lambda x: f"${x:,.0f}")
-    st.markdown("## Trade Ticket")
-    st.dataframe(ticket_display, hide_index=True, width='stretch')
-    st.download_button(
-        "Download trade ticket CSV",
-        ticket.to_csv(index=False),
-        file_name="etf_signal_trade_ticket.csv",
-        mime="text/csv",
-    )
-
-    st.markdown("## Signal Remix")
-    remix_cols = st.columns(5)
-    forecast_mix = remix_cols[0].slider("Forecast", 0.0, 1.0, float(manifest["signal_weights"]["forecast"]), 0.05)
-    momentum_mix = remix_cols[1].slider("Momentum", 0.0, 1.0, float(manifest["signal_weights"]["momentum"]), 0.05)
-    stability_mix = remix_cols[2].slider("Stability", 0.0, 1.0, float(manifest["signal_weights"]["stability"]), 0.05)
-    remix_max = remix_cols[3].slider("Max sector", 0.15, 0.60, float(manifest["max_weight"]), 0.05)
-    remix_top_n = remix_cols[4].slider("Active sectors", 2, len(sector_columns), int(manifest["top_n"]), 1)
-    remix_weights = remix_allocation(allocation, forecast_mix, momentum_mix, stability_mix, remix_max, remix_top_n)
-    remix_df = allocation[["ticker", "sector"]].copy()
-    remix_df["remixed_weight"] = remix_df["ticker"].map(remix_weights).fillna(0.0)
-
-    remix_fig = go.Figure(
-        go.Bar(
-            x=remix_df.sort_values("remixed_weight")["remixed_weight"],
-            y=remix_df.sort_values("remixed_weight")["sector"] + " (" + remix_df.sort_values("remixed_weight")["ticker"] + ")",
-            orientation="h",
-            marker=dict(color="#4b6f8f"),
-            text=[pct(x) for x in remix_df.sort_values("remixed_weight")["remixed_weight"]],
-            textposition="outside",
-        )
-    )
-    remix_fig.update_layout(
-        height=360,
-        margin=dict(l=10, r=50, t=10, b=10),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(255,250,240,0.45)",
-        font=dict(family="IBM Plex Mono", color="#17211f"),
-        xaxis=dict(tickformat=".0%", gridcolor="rgba(23,33,31,0.12)", range=[0, max(0.4, remix_df["remixed_weight"].max() * 1.18)]),
-        yaxis=dict(showgrid=False),
-        showlegend=False,
-    )
-    st.plotly_chart(remix_fig, width='stretch')
-
-    st.markdown("## Stress Test")
-    scenarios = scenario_table(monthly_sector_returns, strategy_returns, target_weights)
-    scenario_display = scenarios.copy()
-    for col in ["Current Target", "ML Signal Blend", "SPY Buy & Hold", "Equal-Weight Sectors"]:
-        scenario_display[col] = scenario_display[col].map(lambda x: f"{x:.2%}")
-    st.dataframe(scenario_display, hide_index=True, width='stretch')
 
 
 with tab_research:
@@ -740,3 +647,82 @@ with tab_research:
             """,
             unsafe_allow_html=True,
         )
+
+    st.markdown("## ML Sandbox — exploratory, non-authoritative")
+    st.caption(
+        "Remix the existing ML artifact scores for visual research only. This sandbox "
+        "does not write the authoritative workbench target, Portfolio Lab session "
+        "state, or any rebalance ticket."
+    )
+    remix_cols = st.columns(5)
+    forecast_mix = remix_cols[0].slider(
+        "ML forecast mix",
+        0.0,
+        1.0,
+        float(manifest["signal_weights"]["forecast"]),
+        0.05,
+        key="ml_sandbox_forecast",
+    )
+    momentum_mix = remix_cols[1].slider(
+        "ML momentum mix",
+        0.0,
+        1.0,
+        float(manifest["signal_weights"]["momentum"]),
+        0.05,
+        key="ml_sandbox_momentum",
+    )
+    stability_mix = remix_cols[2].slider(
+        "ML stability mix",
+        0.0,
+        1.0,
+        float(manifest["signal_weights"]["stability"]),
+        0.05,
+        key="ml_sandbox_stability",
+    )
+    remix_max = remix_cols[3].slider(
+        "ML max sector",
+        0.15,
+        0.60,
+        float(manifest["max_weight"]),
+        0.05,
+        key="ml_sandbox_max_sector",
+    )
+    remix_top_n = remix_cols[4].slider(
+        "ML active sectors",
+        2,
+        len(sector_columns),
+        int(manifest["top_n"]),
+        1,
+        key="ml_sandbox_top_n",
+    )
+    remix_weights = remix_allocation(
+        allocation,
+        forecast_mix,
+        momentum_mix,
+        stability_mix,
+        remix_max,
+        remix_top_n,
+    )
+    remix_df = allocation[["ticker", "sector"]].copy()
+    remix_df["exploratory_weight"] = remix_df["ticker"].map(remix_weights).fillna(0.0)
+    remix_df = remix_df.sort_values("exploratory_weight")
+    remix_figure = go.Figure(
+        go.Bar(
+            x=remix_df["exploratory_weight"],
+            y=remix_df["sector"] + " (" + remix_df["ticker"] + ")",
+            orientation="h",
+            marker=dict(color="#4b6f8f"),
+            text=[pct(value) for value in remix_df["exploratory_weight"]],
+            textposition="outside",
+        )
+    )
+    remix_figure.update_layout(
+        height=360,
+        margin=dict(l=10, r=50, t=10, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(255,250,240,0.45)",
+        xaxis=dict(tickformat=".0%"),
+        yaxis=dict(showgrid=False),
+        showlegend=False,
+    )
+    st.plotly_chart(remix_figure, width="stretch")
