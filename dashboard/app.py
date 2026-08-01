@@ -20,7 +20,7 @@ from dashboard.workbench import render_portfolio_lab, render_workbench
 st.set_page_config(
     page_title="ETF Research Studio",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 
@@ -451,7 +451,10 @@ sector_columns = list(manifest["universe"].keys())
 
 with st.sidebar:
     st.markdown("### ML Research Controls")
-    st.caption("These controls apply only to the existing ML research tabs.")
+    st.caption(
+        "These controls apply only to the existing ML research tabs. They do not "
+        "change ETF Allocation Workbench results or the Portfolio Lab ticket."
+    )
     initial_capital = st.number_input(
         "Portfolio value",
         min_value=1000,
@@ -651,7 +654,7 @@ with tab_research:
     st.markdown("## ML Sandbox — exploratory, non-authoritative")
     st.caption(
         "Remix the existing ML artifact scores for visual research only. This sandbox "
-        "does not write the authoritative workbench target, Portfolio Lab session "
+        "does not change the selected workbench proposal, Portfolio Lab session "
         "state, or any rebalance ticket."
     )
     remix_cols = st.columns(5)
