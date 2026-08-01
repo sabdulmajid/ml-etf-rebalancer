@@ -1,0 +1,75 @@
+{
+  "schema_version": "workbench-bundle-v1",
+  "generated_at_utc": "2026-08-01T21:20:44.075167Z",
+  "price_data_as_of": "2026-07-31",
+  "last_complete_month": "2026-07-31",
+  "cash_rate_as_of": "2026-07-30",
+  "cash_valuation_through": "2026-07-31",
+  "cash_identifier": "CASH:USD_OVERNIGHT",
+  "cash_label": "Cash \u2014 U.S. overnight-rate proxy",
+  "cash_policy": "Official New York Fed EFFR before 2018-04-02; official SOFR from 2018-04-02; analytical and non-investable.",
+  "cash_switch_date": "2018-04-02",
+  "sofr_index_validation": {
+    "observations": 1603,
+    "maximum_absolute_error": 4.998790936738828e-09,
+    "tolerance": 5e-08,
+    "passed": true
+  },
+  "instrument_count": 14,
+  "source_versions": {
+    "prices": "Yahoo Finance adjusted close via yfinance",
+    "cash": "Federal Reserve Bank of New York Markets Data API",
+    "strategy_data_contract": "allocation-policy-v1"
+  },
+  "dependency_versions": {
+    "pandas": "2.3.3",
+    "yfinance": "0.2.66",
+    "exchange-calendars": "4.13.2"
+  },
+  "source_queries": {
+    "prices": {
+      "requested_start": "1993-01-01",
+      "requested_end": "2026-08-02",
+      "requested_end_inclusive": false,
+      "returned_start": "1993-01-29",
+      "returned_end": "2026-07-31",
+      "returned_count": 8433
+    },
+    "effr": {
+      "requested_start": "2000-07-03",
+      "requested_end": "2018-04-01",
+      "returned_start": "2000-07-03",
+      "returned_end": "2018-03-30",
+      "returned_count": 4461
+    },
+    "sofr": {
+      "requested_start": "2018-04-02",
+      "requested_end": "2026-08-01",
+      "returned_start": "2018-04-02",
+      "returned_end": "2026-07-30",
+      "returned_count": 2080
+    },
+    "sofr_index": {
+      "requested_start": "2020-03-02",
+      "requested_end": "2026-08-01",
+      "returned_start": "2020-03-02",
+      "returned_end": "2026-07-31",
+      "returned_count": 1603
+    }
+  },
+  "row_counts": {
+    "adjusted_close.csv": 8433,
+    "cash_index.csv": 6541,
+    "instruments.csv": 14
+  },
+  "file_sha256": {
+    "adjusted_close.csv": "a297a98f115bd65de4b41ce2bd004439d0f0341f8e0cbcb854d6d91ae1c39e88",
+    "cash_index.csv": "0f7b230ca493710830a794038714e6fad4598c8b3944a479a20876e20fc62e17",
+    "instruments.csv": "8a385dde603a68c155a7fb96edbbce646bece6bbaaeeb500879db28370261754"
+  },
+  "validation_status": "passed",
+  "git_sha": "10450310ed7b2969eac5cf344d989b2065433720",
+  "git_dirty_at_build": false,
+  "pipeline_version": "workbench-artifact-builder-v1",
+  "refresh_error": null
+}
