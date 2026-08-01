@@ -20,6 +20,12 @@ The deployed app does not run model training or download market data from the
 UI. Both the existing ML experience and the ETF Allocation Workbench read only
 committed, reviewable artifacts.
 
+The workbench cache key includes the resolved bundle path plus a SHA-256 digest
+of each of the four public files. Replacing any file invalidates the cached
+validated bundle and full-artifact allocation schedules even when file size and
+timestamps are preserved. Historical range and cost reruns reuse those
+schedules and rerun only common accounting.
+
 ## Refreshing Existing ML Artifacts
 
 ```bash
@@ -108,3 +114,37 @@ The public application must import `data.workbench`, not the offline builder.
 corrupt, stale-schema, or checksum-mismatched bundle files. If a workbench bundle
 cannot be loaded, deployment should isolate that failure to the workbench while
 leaving the existing ML experience available.
+
+At runtime, the workbench compares the bundle's final completed month with the
+current completed month. Current data is enabled, one month behind is enabled
+with a warning, and data two or more completed months behind is disabled. A
+future build timestamp or future completed period is also disabled. These states
+affect only the workbench; the committed ML tabs remain available.
+
+The public UI exposes one authoritative workbench target at a time. Transfer to
+Portfolio Lab is explicit and requires valid, non-normalized current ETF and cash
+weights summing to 100%. Portfolio Lab rebuilds its ticket from the exact target
+stored in Streamlit session state. `CASH:USD_OVERNIGHT` appears only in the
+separate cash-balance row and never in ETF security orders.
+
+Signal Remix is rendered only under `ML Sandbox — exploratory,
+non-authoritative` in ML Research Notes. It does not read or write the
+authoritative workbench target, `portfolio_lab_transfer`, or any ticket. The
+hindsight scenario stress test remains removed because applying a current target
+to past regimes implied a holdings history that did not exist. Existing ML
+artifacts and historical results are not modified.
+
+## Deterministic Local UI Capture
+
+For AppTest or a local screenshot review immediately after an artifact build,
+an unset-by-default test hook can supply a deterministic clock:
+
+```bash
+ETF_WORKBENCH_TEST_AS_OF=2026-08-02 streamlit run dashboard/app.py
+```
+
+Choose a timestamp at or after `generated_at_utc` whose prior completed month
+matches the bundle. This hook does not alter prices, targets, returns, files, or
+capture screenshots; it only controls freshness evaluation. It is not
+configured in production. Review screenshots under `docs/screenshots/pr3` were
+captured separately from the running local app.
