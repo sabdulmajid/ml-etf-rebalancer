@@ -13,8 +13,15 @@ streamlit run dashboard/app.py
 
 1. Connect the GitHub repository.
 2. Set the app entrypoint to `dashboard/app.py`.
-3. Use the root `requirements.txt`.
+3. Keep the root `requirements.txt` as the only Python dependency manifest.
 4. Deploy.
+
+Streamlit Community Cloud searches the entrypoint directory before the
+repository root when selecting a dependency file. Therefore this repository
+intentionally has no `dashboard/requirements.txt`; adding one would shadow the
+root manifest. This behavior is covered by `tests/test_deployment.py` and is
+documented in Streamlit's
+[app-dependencies guide](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/app-dependencies).
 
 The deployed app does not run model training or download market data from the
 UI. Both the existing ML experience and the ETF Allocation Workbench read only
