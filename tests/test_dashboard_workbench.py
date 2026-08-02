@@ -14,21 +14,28 @@ from dashboard.workbench import (
     EQUAL_WEIGHT_LABEL,
     VOL_BALANCED_LABEL,
     VOL_TREND_LABEL,
+    _format_metrics,
+    allocation_chart_data,
     allocation_history_download,
     available_comparisons,
     build_workbench_study,
     bundle_fingerprint,
     clear_workbench_caches,
+    current_weight_status,
     historical_download,
     holding_period_returns,
     latest_target_download,
     load_cached_bundle,
+    proposed_target_summary,
     target_provenance,
     target_provenance_summary,
+    ticket_action_summary,
+    ticket_dollar_summary,
     why_this_weight,
 )
 from data.cash import CASH_LABEL
 from data.workbench import DEFAULT_BUNDLE_PATH, load_workbench_bundle
+from portfolio.rebalance import build_rebalance_ticket
 
 
 @pytest.fixture(scope="module")
@@ -164,6 +171,20 @@ def test_current_mix_requires_valid_unnormalized_current_weights(bundle):
         )
 
 
+@pytest.mark.parametrize(
+    ("weights", "status", "message"),
+    [
+        ({"SPY": 0.9}, "under", "Add 10.00 percentage points"),
+        ({"SPY": 1.0}, "ready", "Ready to compare"),
+        ({"SPY": 1.1}, "over", "Remove 10.00 percentage points"),
+    ],
+)
+def test_current_weight_status_is_actionable(weights, status, message):
+    actual_status, actual_message = current_weight_status(weights)
+    assert actual_status == status
+    assert message in actual_message
+
+
 def test_comparison_options_prevent_incompatible_and_duplicate_series():
     one = available_comparisons(["SPY"], current_weights_valid=False)
     assert one == [VOL_TREND_LABEL, BUY_HOLD_LABEL, CASH_LABEL_SHORT]
@@ -209,6 +230,20 @@ def test_explanation_has_required_semantics_and_cash_label(bundle):
     )
     assert trend["final_weight"].sum() == pytest.approx(1.0)
 
+    balanced = why_this_weight(bundle, study, VOL_BALANCED_LABEL)
+    balanced_etfs = balanced[balanced["asset"] != CASH_LABEL]
+    assert (balanced_etfs["trend"] == "Not used").all()
+    assert all("trend is not used" in reason.lower() or "position cap" in reason.lower()
+               for reason in balanced_etfs["reason"])
+
+    all_fail = build_workbench_study(bundle, ["AGG"])
+    all_fail_explanation = why_this_weight(bundle, all_fail, VOL_TREND_LABEL)
+    cash_reason = all_fail_explanation.loc[
+        all_fail_explanation["asset"] == CASH_LABEL, "reason"
+    ].item()
+    assert "All selected ETFs failed" in cash_reason
+    assert "100% analytical cash" in cash_reason
+
 
 def test_downloads_exactly_reconcile_displayed_results_and_targets(bundle):
     study = build_workbench_study(bundle, DEFAULT_SELECTION, transaction_cost_bps=9)
@@ -220,6 +255,7 @@ def test_downloads_exactly_reconcile_displayed_results_and_targets(bundle):
         pd.testing.assert_frame_equal(actual.reset_index(drop=True), expected)
 
     target = latest_target_download(bundle, study, VOL_TREND_LABEL)
+    assert "displayed_history_through" not in target.columns
     assert target["target_weight"].sum() == pytest.approx(1.0)
     assert target.loc[target["asset"] == CASH_ASSET, "asset_type"].item() == "analytical_cash"
     assert target["signal_as_of"].nunique() == 1
@@ -240,11 +276,31 @@ def test_downloads_exactly_reconcile_displayed_results_and_targets(bundle):
     )
 
     allocation = allocation_history_download(study, VOL_TREND_LABEL)
+    assert allocation.columns[:4].tolist() == [
+        "strategy",
+        "rebalance_date",
+        "signal_date",
+        "holding_period_end",
+    ]
     weight_columns = [*DEFAULT_SELECTION, CASH_ASSET]
     assert allocation[weight_columns].sum(axis=1).to_numpy() == pytest.approx(1.0)
     assert allocation["turnover"].to_numpy() == pytest.approx(
         study.backtests[VOL_TREND_LABEL].periods["turnover"].to_numpy()
     )
+    assert allocation["estimated_cost_rate"].to_numpy() == pytest.approx(
+        study.backtests[VOL_TREND_LABEL].periods["cost_rate"].to_numpy()
+    )
+    assert allocation["transaction_cost_value"].to_numpy() == pytest.approx(
+        study.backtests[VOL_TREND_LABEL].periods["transaction_cost"].to_numpy()
+    )
+    assert not np.allclose(
+        allocation["estimated_cost_rate"].to_numpy(),
+        allocation["transaction_cost_value"].to_numpy(),
+    )
+    plotted = allocation_chart_data(study, VOL_TREND_LABEL)
+    assert plotted.index.name == "rebalance_date"
+    assert plotted.index[0] == study.backtests[VOL_TREND_LABEL].target_weights.index[0]
+    assert plotted.index[0] != study.backtests[VOL_TREND_LABEL].periods["signal_date"].iloc[0]
 
 
 def test_target_provenance_keeps_cash_distinct_from_tactical_strategy(bundle):
@@ -259,9 +315,10 @@ def test_target_provenance_keeps_cash_distinct_from_tactical_strategy(bundle):
     assert cash["signal_as_of"] == "not_applicable_no_tactical_signal"
     assert cash["execution_status"] == "constant_target_effective_for_analytical_ticket"
     assert cash["policy_version"] == "analytical-cash-comparison-v1"
-    assert cash["historical_accounting_schedule_as_of"] == str(
-        study.allocation_results[VOL_BALANCED_LABEL].latest_signal_date.date()
+    assert cash["displayed_history_through"] == str(
+        study.backtests[CASH_LABEL_SHORT].periods["period_end_date"].iloc[-1].date()
     )
+    assert "historical_accounting_schedule_as_of" not in cash
     assert cash != target_provenance(bundle, study, VOL_BALANCED_LABEL)
     summary = target_provenance_summary(cash)
     assert "No tactical signal" in summary
@@ -284,8 +341,8 @@ def test_target_provenance_keeps_buy_hold_distinct_from_tactical_strategy(bundle
         == "constant_target_effective_for_analytical_ticket"
     )
     assert buy_hold["policy_version"] == "single-etf-buy-hold-v1"
-    assert buy_hold["historical_accounting_schedule_as_of"] == str(
-        study.allocation_results[VOL_BALANCED_LABEL].latest_signal_date.date()
+    assert buy_hold["displayed_history_through"] == str(
+        study.backtests[BUY_HOLD_LABEL].periods["period_end_date"].iloc[-1].date()
     )
     summary = target_provenance_summary(buy_hold)
     assert "No tactical signal" in summary
@@ -296,3 +353,39 @@ def test_target_provenance_keeps_buy_hold_distinct_from_tactical_strategy(bundle
     assert download["policy_version"].unique().tolist() == [
         "single-etf-buy-hold-v1"
     ]
+
+
+def test_equal_weight_is_fixed_not_a_pending_tactical_signal(bundle):
+    full = build_workbench_study(bundle, DEFAULT_SELECTION)
+    end = full.backtests[EQUAL_WEIGHT_LABEL].periods["period_end_date"].iloc[-12]
+    selected = build_workbench_study(bundle, DEFAULT_SELECTION, end=end)
+    provenance = target_provenance(bundle, selected, EQUAL_WEIGHT_LABEL)
+
+    assert provenance["signal_as_of"] == "not_applicable_no_tactical_signal"
+    assert provenance["execution_status"] == "constant_target_effective_for_analytical_ticket"
+    assert provenance["policy_version"] == "equal-weight-monthly-v1"
+    assert provenance["displayed_history_through"] == str(end.date())
+
+
+def test_plain_summaries_and_metrics_never_render_none(bundle):
+    study = build_workbench_study(bundle, DEFAULT_SELECTION)
+    summary = proposed_target_summary(study.latest_targets[VOL_TREND_LABEL])
+    assert "100.00% total" in summary
+    assert "None" not in summary
+    metrics = _format_metrics(study, [VOL_TREND_LABEL])
+    assert not metrics.map(lambda value: value is None).any().any()
+
+    ticket = build_rebalance_ticket(
+        {"SPY": 0.2, "IEF": 0.3, "GLD": 0.1, CASH_ASSET: 0.4},
+        study.latest_targets[VOL_TREND_LABEL],
+        DEFAULT_SELECTION,
+        transaction_cost_bps=5,
+        portfolio_value=100_000,
+    )
+    action = ticket_action_summary(ticket)
+    dollars = ticket_dollar_summary(ticket)
+    assert "percentage points" in action
+    assert "cash" in action
+    assert "separately" in dollars
+    assert "not deducted" in dollars
+    assert "+$" in dollars or "-$" in dollars
