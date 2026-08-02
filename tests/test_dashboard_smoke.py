@@ -2,7 +2,6 @@ import subprocess
 import sys
 from pathlib import Path
 import datetime as dt
-from copy import deepcopy
 
 import pandas as pd
 import pytest
@@ -50,33 +49,11 @@ def test_streamlit_workbench_transfer_survives_rerun_and_uses_exact_target(
         "ETF Allocation Workbench",
         "ML Current Allocation",
     ]
-    info_text = " ".join(str(item.value) for item in app.info)
-    assert "1 · Choose ETFs" in info_text
-    assert "2 · Compare approaches" in info_text
-    assert "3 · Rebalance (optional)" in info_text
-    explanation = app.table[0].value
-    assert explanation.columns.tolist() == [
-        "Asset",
-        "Proposed target",
-        "Role and signal",
-        "Reason",
-    ]
-    assert explanation["Proposed target"].sum() == pytest.approx(1.0)
-    assert explanation["Reason"].str.len().gt(0).all()
     app.checkbox(key="wb_current_enabled").set_value(True).run()
-    assert any(
-        "add Current Mix — monthly rebalanced" in item.value
-        for item in app.caption
-    )
     app.button(key="wb_send_to_portfolio_lab").click().run()
     assert not app.exception
-    assert any("Open the Portfolio Lab tab" in item.value for item in app.success)
-    assert any(
-        "Move from your current mix to the proposal" in item.value
-        for item in app.markdown
-    )
 
-    transfer = deepcopy(app.session_state["portfolio_lab_transfer"])
+    transfer = app.session_state["portfolio_lab_transfer"]
     selected = tuple(transfer["selected_etfs"])
     target = pd.Series(transfer["target_weights"], dtype=float).reindex(
         [*selected, CASH_ASSET]
@@ -109,7 +86,6 @@ def test_streamlit_workbench_transfer_survives_rerun_and_uses_exact_target(
     rerun = app.session_state["portfolio_lab_transfer"]
     assert rerun["target_weights"] == transfer["target_weights"]
     assert rerun["target_csv"] == transfer["target_csv"]
-    assert rerun["displayed_history_through"] == transfer["displayed_history_through"]
     app.slider(key="ml_sandbox_forecast").set_value(0.2).run()
     sandbox_rerun = app.session_state["portfolio_lab_transfer"]
     assert sandbox_rerun["target_weights"] == transfer["target_weights"]
@@ -117,34 +93,10 @@ def test_streamlit_workbench_transfer_survives_rerun_and_uses_exact_target(
     assert not app.exception
 
 
-def test_portfolio_lab_currency_summary_escapes_streamlit_markdown(monkeypatch):
-    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-08-02")
-    app = AppTest.from_file(
-        str(ROOT / "dashboard" / "app.py"), default_timeout=20
-    ).run()
-    app.checkbox(key="wb_current_enabled").set_value(True).run()
-    app.button(key="wb_send_to_portfolio_lab").click().run()
-    app.checkbox(key="portfolio_lab_include_dollars").set_value(True).run()
-
-    rendered = [item.value for item in app.markdown]
-    summary = next(item for item in rendered if item.startswith("ETF notionals:"))
-    assert r"\$" in summary
-    assert "not deducted from these notionals" in summary
-    assert not app.exception
-
-
 def test_streamlit_selection_reconciliation_and_invalid_current_controls(monkeypatch):
     monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-08-02")
     app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=20).run()
     app.checkbox(key="wb_current_enabled").set_value(True).run()
-    assert any("Current total: 100.00%" in item.value for item in app.success)
-    app.number_input(key=f"wb_current_pct_{CASH_ASSET}").set_value(90.0).run()
-    assert any("Add 10.00 percentage points" in item.value for item in app.info)
-    app.number_input(key="wb_current_pct_SPY").set_value(20.0).run()
-    assert any("Remove 10.00 percentage points" in item.value for item in app.warning)
-    app.number_input(key=f"wb_current_pct_{CASH_ASSET}").set_value(80.0).run()
-    assert any("Ready to compare" in item.value for item in app.success)
-    app.number_input(key="wb_current_pct_SPY").set_value(0.0).run()
     app.number_input(key="wb_current_pct_GLD").set_value(20.0)
     app.number_input(key=f"wb_current_pct_{CASH_ASSET}").set_value(80.0)
     app.run()
@@ -163,7 +115,6 @@ def test_streamlit_selection_reconciliation_and_invalid_current_controls(monkeyp
     assert app.button(key="wb_send_to_portfolio_lab_disabled").disabled
     assert "portfolio_lab_transfer" not in app.session_state
     assert any("Current weights are invalid" in warning.value for warning in app.warning)
-    assert any("adjust the current-weight total" in item.value for item in app.info)
     assert not app.exception
 
 
@@ -180,10 +131,6 @@ def test_comparison_defaults_follow_selected_etf_tuple(monkeypatch):
         "Buy & Hold",
         "Cash — U.S. overnight-rate proxy",
     ]
-    assert any(
-        "keeps holding the ETF" in item.value and "switches between that ETF and cash" in item.value
-        for item in app.info
-    )
     app.multiselect(key="wb_selected_etfs").set_value(["SPY", "IEF", "GLD"]).run()
     restored = next(widget for widget in app.multiselect if widget.label == "Comparison series")
     assert restored.value == initial_default

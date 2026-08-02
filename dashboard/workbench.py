@@ -18,7 +18,6 @@ import streamlit as st
 
 from backtest.engine import (
     CASH_ASSET,
-    WEIGHT_TOLERANCE,
     BacktestResult,
     TargetWeightSchedule,
     run_backtest,
@@ -42,7 +41,6 @@ from strategies.allocation import (
     EQUAL_WEIGHT,
     VOLATILITY_BALANCED,
     VOLATILITY_BALANCED_TREND,
-    position_cap,
     generate_allocation_targets,
 )
 
@@ -286,35 +284,20 @@ def historical_download(study, labels):
 
 
 def allocation_history_download(study, label):
-    """Return exact allocations with all three dates named unambiguously."""
+    """Return the exact displayed authoritative allocation and accounting rows."""
     result = study.backtests[label]
     frame = result.target_weights.reset_index().copy()
-    frame = frame.rename(columns={"execution_date": "rebalance_date"})
     frame.insert(0, "strategy", label)
-    frame.insert(2, "signal_date", result.periods["signal_date"].to_numpy())
-    frame.insert(
-        3,
-        "holding_period_end",
-        result.periods["period_end_date"].to_numpy(),
-    )
+    frame["signal_date"] = result.periods["signal_date"].to_numpy()
+    frame["period_end_date"] = result.periods["period_end_date"].to_numpy()
     frame["turnover"] = result.periods["turnover"].to_numpy(dtype=float)
-    frame["estimated_cost_rate"] = result.periods["cost_rate"].to_numpy(dtype=float)
-    frame["transaction_cost_value"] = result.periods[
-        "transaction_cost"
-    ].to_numpy(dtype=float)
-    return frame
-
-
-def allocation_chart_data(study, label):
-    """Return plotted allocations indexed by their actual rebalance date."""
-    result = study.backtests[label]
-    frame = result.target_weights.copy()
-    frame.index = pd.DatetimeIndex(frame.index, name="rebalance_date")
+    frame["transaction_cost"] = result.periods["transaction_cost"].to_numpy(dtype=float)
     return frame
 
 
 def target_provenance(bundle, study, label):
     """Return authoritative timing and artifact provenance for a latest target."""
+    accounting_schedule = study.allocation_results[VOL_BALANCED_LABEL]
     if label == CASH_LABEL_SHORT:
         signal_as_of = "not_applicable_no_tactical_signal"
         execution_status = "constant_target_effective_for_analytical_ticket"
@@ -327,10 +310,6 @@ def target_provenance(bundle, study, label):
         signal_as_of = "not_applicable_user_entered_mix"
         execution_status = "constant_target_effective_for_analytical_ticket"
         policy_version = "user-entered-monthly-mix-v1"
-    elif label == EQUAL_WEIGHT_LABEL:
-        signal_as_of = "not_applicable_no_tactical_signal"
-        execution_status = "constant_target_effective_for_analytical_ticket"
-        policy_version = "equal-weight-monthly-v1"
     else:
         allocation = study.allocation_results[label]
         signal_as_of = str(pd.Timestamp(allocation.latest_signal_date).date())
@@ -346,10 +325,8 @@ def target_provenance(bundle, study, label):
         "artifact_generated_at_utc": bundle.manifest["generated_at_utc"],
         "price_data_as_of": bundle.manifest["price_data_as_of"],
         "policy_version": policy_version,
-        "displayed_history_through": str(
-            pd.Timestamp(
-                study.backtests[label].periods["period_end_date"].iloc[-1]
-            ).date()
+        "historical_accounting_schedule_as_of": str(
+            pd.Timestamp(accounting_schedule.latest_signal_date).date()
         ),
     }
 
@@ -378,17 +355,10 @@ def target_provenance_summary(provenance):
 def latest_target_download(bundle, study, label):
     target = study.latest_targets[label]
     provenance = target_provenance(bundle, study, label)
-    # The latest target is independent of the user's historical chart range.
-    # Keep range-specific context in the UI/transfer payload, not in this file.
-    target_provenance_fields = {
-        key: value
-        for key, value in provenance.items()
-        if key != "displayed_history_through"
-    }
     return pd.DataFrame(
         {
             "strategy": label,
-            **target_provenance_fields,
+            **{key: value for key, value in provenance.items()},
             "asset": target.index,
             "target_weight": target.to_numpy(dtype=float),
             "asset_type": [
@@ -410,28 +380,17 @@ def why_this_weight(bundle, study, label):
         for ticker in study.selected_etfs:
             row = diagnostics.loc[ticker]
             equal_weight = label == EQUAL_WEIGHT_LABEL
-            trend_used = label == VOL_TREND_LABEL
             raw = (
                 np.nan
                 if equal_weight
                 else float(row["unfiltered_inverse_vol_weight"])
             )
             final = float(row["final_target_weight"])
-            if equal_weight:
-                reason = "Equal share of the selected ETFs; volatility and trend are not used."
-            elif label == VOL_BALANCED_LABEL:
-                reason = (
-                    "Inverse-volatility weight, limited by the position cap."
-                    if "cap" in str(row["eligibility_reason"]).lower()
-                    else "Inverse-volatility weight; trend is not used."
-                )
-            else:
-                reason = str(row["eligibility_reason"])
             rows.append(
                 {
                     "asset": ticker,
                     "role": registry.loc[ticker, "role"],
-                    "trend": row["trend_status"] if trend_used else "Not used",
+                    "trend": "Not used" if equal_weight else row["trend_status"],
                     "trailing_volatility": row["trailing_volatility"],
                     "raw_weight": raw,
                     "filtered_raw_weight": (
@@ -441,28 +400,14 @@ def why_this_weight(bundle, study, label):
                     "change_vs_uncapped_inverse_vol": (
                         np.nan if equal_weight else final - raw
                     ),
-                    "reason": reason,
+                    "reason": row["eligibility_reason"],
                 }
             )
-        cash_weight = float(target.loc[CASH_ASSET])
-        if label == VOL_TREND_LABEL and np.isclose(cash_weight, 1.0):
-            reason = (
-                "All selected ETFs failed the trend rule, so the proposal is "
-                "100% analytical cash."
-            )
-        elif label == VOL_TREND_LABEL and cash_weight > WEIGHT_TOLERANCE:
-            reason = (
-                "Analytical cash holds the amount not allocated after trend exclusions "
-                "and position caps."
-            )
-        elif label == VOL_TREND_LABEL:
-            reason = "Every dollar is allocated to ETFs that passed the trend rule."
-        elif label == VOL_BALANCED_LABEL and cash_weight > WEIGHT_TOLERANCE:
-            reason = "Analytical cash holds any amount the eligible capped ETFs cannot take."
-        elif label == VOL_BALANCED_LABEL:
-            reason = "No residual cash; the eligible ETFs use the full allocation."
-        else:
-            reason = "Equal Weight is fully allocated across the selected ETFs."
+        reason = (
+            "Residual created by trend exclusions and the adaptive ETF cap"
+            if target.loc[CASH_ASSET] > 0.0
+            else "No residual cash target"
+        )
     else:
         descriptions = {
             CASH_LABEL_SHORT: "Analytical cash comparison",
@@ -483,12 +428,7 @@ def why_this_weight(bundle, study, label):
             }
             for ticker in study.selected_etfs
         ]
-        if label == CASH_LABEL_SHORT:
-            reason = "This comparison intentionally holds 100% analytical cash."
-        elif label == BUY_HOLD_LABEL:
-            reason = "Buy & Hold stays fully invested in the selected ETF, so cash is 0%."
-        else:
-            reason = "Cash is kept at exactly the percentage entered in Current Mix."
+        reason = descriptions[label]
     rows.append(
         {
             "asset": CASH_LABEL,
@@ -512,17 +452,17 @@ def _format_metrics(study, labels):
         rows.append(
             {
                 "Series": label,
-                "Annualized return ↑": metrics["annualized_return"],
-                "Annualized volatility ↓": metrics["annualized_volatility"],
-                "Sharpe above cash ↑": metrics["excess_return_sharpe"],
-                "Maximum drawdown ↑": metrics["max_drawdown"],
-                "Return / drawdown ↑": metrics["calmar_ratio"],
-                "Worst month ↑": metrics["worst_month"],
-                "Annualized one-way turnover ↓": metrics["annualized_turnover"],
-                "Annualized cost drag ↓": metrics["transaction_cost_drag"],
+                "Annualized return": metrics["annualized_return"],
+                "Volatility": metrics["annualized_volatility"],
+                "Excess-return Sharpe": metrics["excess_return_sharpe"],
+                "Max drawdown": metrics["max_drawdown"],
+                "Calmar": metrics["calmar_ratio"],
+                "Worst month": metrics["worst_month"],
+                "Annual turnover": metrics["annualized_turnover"],
+                "Cost drag": metrics["transaction_cost_drag"],
             }
         )
-    return pd.DataFrame(rows).replace({None: np.nan}).set_index("Series")
+    return pd.DataFrame(rows).set_index("Series")
 
 
 def _line_chart(study, labels, column, title, percent=False):
@@ -557,14 +497,14 @@ def _line_chart(study, labels, column, title, percent=False):
 
 
 def _allocation_chart(study, label):
-    allocations = allocation_chart_data(study, label)
+    result = study.backtests[label]
     figure = go.Figure()
-    for asset in allocations.columns:
+    for asset in result.target_weights.columns:
         display = CASH_LABEL if asset == CASH_ASSET else asset
         figure.add_trace(
             go.Scatter(
-                x=allocations.index,
-                y=allocations[asset],
+                x=result.periods["signal_date"],
+                y=result.target_weights[asset],
                 mode="lines",
                 name=display,
                 stackgroup="allocation",
@@ -594,10 +534,7 @@ def _current_editor(selected):
     enabled = st.checkbox(
         "Enter current weights",
         key="wb_current_enabled",
-        help=(
-            "Optional. These exact weights are never normalized and affect only "
-            "Current Mix and your Portfolio Lab ticket."
-        ),
+        help="Weights are validated as entered and are never normalized.",
     )
     state_key = "wb_current_weight_values"
     prior_key = "wb_current_previous_selection"
@@ -625,10 +562,8 @@ def _current_editor(selected):
         return None, None
 
     st.caption(
-        "Enter the portfolio you hold now, including cash. Values are used exactly "
-        "as entered—they are not normalized and do not change strategy results. "
-        "They only add Current Mix and enable the Portfolio Lab ticket. Removed ETF "
-        "weight moves to cash; a newly selected ETF starts at 0%."
+        "Removed ETF weight moves to cash; a newly selected ETF starts at 0%. "
+        "The total must equal 100%."
     )
     columns = st.columns(min(4, len(selected) + 1))
     edited = {}
@@ -644,13 +579,6 @@ def _current_editor(selected):
         ) / 100.0
     weights = pd.Series(edited, dtype=float)
     st.session_state[state_key] = weights.to_dict()
-    status, message = current_weight_status(weights)
-    if status == "ready":
-        st.success(message)
-    elif status == "under":
-        st.info(message)
-    else:
-        st.warning(message)
     try:
         valid = validate_portfolio_weights(weights, selected)
     except ValueError as exc:
@@ -658,96 +586,12 @@ def _current_editor(selected):
     return valid, None
 
 
-def current_weight_status(weights):
-    """Give an exact, actionable status for non-normalized current weights."""
-    total = float(pd.Series(weights, dtype=float).sum())
-    difference_points = (1.0 - total) * 100.0
-    if np.isclose(total, 1.0, rtol=0.0, atol=WEIGHT_TOLERANCE):
-        return "ready", "Current total: 100.00%. Ready to compare and build a ticket."
-    if total < 1.0:
-        return (
-            "under",
-            f"Current total: {total:.2%}. Add {difference_points:.2f} percentage "
-            "points to reach 100%.",
-        )
-    return (
-        "over",
-        f"Current total: {total:.2%}. Remove {abs(difference_points):.2f} "
-        "percentage points to reach 100%.",
-    )
-
-
-def proposed_target_summary(target):
-    """Summarize a target in plain language while preserving exact totals."""
-    values = pd.Series(target, dtype=float)
-    cash_weight = float(values.get(CASH_ASSET, 0.0))
-    etf_weight = float(values.drop(labels=[CASH_ASSET], errors="ignore").sum())
-    total = float(values.sum())
-    funded = values.drop(labels=[CASH_ASSET], errors="ignore")
-    funded = funded[funded > WEIGHT_TOLERANCE].sort_values(ascending=False)
-    if funded.empty:
-        allocation_text = "No ETF receives weight."
-    else:
-        allocation_text = "ETF weights: " + ", ".join(
-            f"{asset} {weight:.2%}" for asset, weight in funded.items()
-        ) + "."
-    return (
-        f"This proposal allocates {etf_weight:.2%} to ETFs and {cash_weight:.2%} "
-        f"to analytical cash ({total:.2%} total). {allocation_text}"
-    )
-
-
-def ticket_action_summary(ticket):
-    """Describe the exact current-to-target moves in a rebalance ticket."""
-    actions = []
-    for row in ticket.security_orders.itertuples(index=False):
-        change = float(row.percentage_point_change)
-        if abs(change) <= WEIGHT_TOLERANCE * 100.0:
-            continue
-        verb = "Buy" if change > 0.0 else "Sell"
-        actions.append(f"{verb} {row.asset} by {abs(change):.2f} percentage points")
-    cash_change = float(ticket.cash_balance["percentage_point_change"].iloc[0])
-    if abs(cash_change) > WEIGHT_TOLERANCE * 100.0:
-        verb = "increase" if cash_change > 0.0 else "decrease"
-        actions.append(f"{verb} cash by {abs(cash_change):.2f} percentage points")
-    if not actions:
-        return "No allocation changes are needed; current and target weights match."
-    return "; ".join(actions) + "."
-
-
-def ticket_dollar_summary(ticket):
-    """Summarize optional ETF notionals without treating cash or costs as orders."""
-    if "trade_amount" not in ticket.security_orders:
-        return None
-    amounts = ticket.security_orders["trade_amount"].astype(float)
-    buys = float(amounts.clip(lower=0.0).sum())
-    sells = float((-amounts.clip(upper=0.0)).sum())
-    cash_change = float(ticket.cash_balance["trade_amount"].iloc[0])
-    cash_change_text = (
-        f"+${cash_change:,.2f}"
-        if cash_change >= 0.0
-        else f"-${abs(cash_change):,.2f}"
-    )
-    return (
-        f"ETF notionals: buy ${buys:,.2f}, sell ${sells:,.2f}; analytical cash "
-        f"changes by {cash_change_text}. Estimated trading cost is "
-        f"${ticket.estimated_cost_amount:,.2f} separately and is not deducted from "
-        "these notionals."
-    )
-
-
 def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
     """Render the isolated first-tab workbench and populate Portfolio Lab state."""
     st.markdown("## ETF Allocation Workbench")
-    st.write(
-        "Build and compare a simple ETF portfolio, see what each approach would "
-        "hold now, and turn one proposal into a rebalance checklist."
-    )
-    guide = st.columns(3)
-    guide[0].info("**1 · Choose ETFs**\n\nSelect one to eight investments to study.")
-    guide[1].info("**2 · Compare approaches**\n\nReview the proposed mix and historical results.")
-    guide[2].info(
-        "**3 · Rebalance (optional)**\n\nEnter current weights totaling 100%, then send a proposal to Portfolio Lab."
+    st.caption(
+        "Research fixed allocation policies across a curated ETF set. No strategy "
+        "parameters are exposed or fitted in the browser."
     )
     try:
         bundle = load_cached_bundle(bundle_path)
@@ -804,10 +648,6 @@ def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
         value=5.0,
         step=1.0,
         key="wb_cost_bps",
-        help=(
-            "A basis point (bp) is 0.01%, so 5 bps is 0.05%. At 100% one-way "
-            "turnover, the modeled cost is $5 per $10,000 of portfolio value."
-        ),
     )
     try:
         path = Path(bundle.path).resolve()
@@ -841,11 +681,6 @@ def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
         st.info("Choose both a start and end date.")
         return None
     start, end = date_range
-    st.caption(
-        "Historical-range rule: every selected range restarts at $1 in analytical "
-        "cash. The first move into ETFs counts toward turnover and transaction cost. "
-        "Changing this range does not change the latest proposed target."
-    )
 
     options = available_comparisons(selected, current_valid)
     selection_key = "|".join(selected)
@@ -879,51 +714,21 @@ def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
         return None
     if len(selected) == 1:
         st.info(
-            f"With one ETF, compare three distinct choices: {BUY_HOLD_LABEL} keeps "
-            f"holding the ETF, {VOL_TREND_LABEL} switches between that ETF and cash, "
-            f"and {CASH_LABEL_SHORT} stays in analytical cash. Duplicate fully "
-            "invested lines are hidden."
+            "With one ETF, Volatility Balanced, Equal Weight, and Buy & Hold can "
+            "produce the same fully invested path. The duplicate tactical curves "
+            "are hidden and represented once as Buy & Hold."
         )
     if current_valid:
         st.caption(
             "Current Mix is a hypothetical constant target reset at every monthly "
-            "rebalance; it is not a reconstruction of actual holdings history. To "
-            "plot the weights you entered, add Current Mix — monthly rebalanced under "
-            "Comparison series."
+            "rebalance; it is not a reconstruction of actual holdings history."
         )
-    cap = position_cap(len(selected))
-    equal_share = 1.0 / len(selected)
     st.caption(
-        f"{VOL_BALANCED_LABEL} favors steadier ETFs. {VOL_TREND_LABEL} uses the "
-        "same method but gives 0% to ETFs below their long-term trend. Passing "
-        "ETFs are reweighted within the position limit, and any amount that cannot "
-        "be assigned goes to analytical cash. The other lines are reference portfolios."
+        "Policy guide — Volatility Balanced: inverse volatility with the fixed "
+        "position cap. + Trend: also excludes ETFs below their 10-month trend. "
+        "Equal Weight: 1/N, reset monthly. Current Mix: entered weights, reset "
+        f"monthly. {CASH_LABEL}: analytical overnight-rate comparison."
     )
-    with st.expander("How the approaches, timing, and position limit work"):
-        st.markdown(
-            f"""
-            - **{VOL_BALANCED_LABEL}:** gives lower-volatility ETFs more weight using
-              the previous 126 trading days. It does not use correlations, trend, or
-              a return forecast.
-            - **{VOL_TREND_LABEL}:** first requires an ETF's completed month-end price
-              to be strictly above its trailing 10-month average, then applies the
-              same inverse-volatility weighting. ETFs that fail receive 0%; passing
-              ETFs are reweighted subject to the position limit, and any unassigned
-              amount goes to analytical cash.
-            - **{EQUAL_WEIGHT_LABEL}:** gives every selected ETF the same weight and
-              resets it monthly; it uses neither volatility nor trend.
-            - **{CURRENT_MIX_LABEL}:** resets the exact weights you entered each month
-              for comparison. It does not reconstruct your actual transaction history.
-            - **Timing:** completed month-end information sets the target for the next
-              trading close, which is held until the following monthly rebalance.
-            - **Position limit:** No ETF can receive more than 150% of its equal-weight
-              share. With {len(selected)} selected ETF{'s' if len(selected) != 1 else ''},
-              equal weight is {equal_share:.1%} and the maximum is {cap:.1%}.
-
-            These rules look backward at recorded prices. They are not forecasts and
-            do not promise better future returns.
-            """
-        )
 
     try:
         study = build_workbench_study(
@@ -939,6 +744,28 @@ def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
         st.warning(f"Selected range is unavailable: {exc}")
         return None
 
+    _line_chart(study, comparisons, "net_equity", "Equity curves (start = 1.00)")
+    _line_chart(study, comparisons, "drawdown", "Drawdowns", percent=True)
+
+    metrics = _format_metrics(study, comparisons)
+    st.markdown("### Concise metrics")
+    st.dataframe(
+        metrics.style.format(
+            {
+                "Annualized return": "{:.2%}",
+                "Volatility": "{:.2%}",
+                "Excess-return Sharpe": "{:.2f}",
+                "Max drawdown": "{:.2%}",
+                "Calmar": "{:.2f}",
+                "Worst month": "{:.2%}",
+                "Annual turnover": "{:.2%}",
+                "Cost drag": "{:.2%}",
+            },
+            na_rep="—",
+        ),
+        width="stretch",
+    )
+
     target_options = [
         item for item in options if item != CURRENT_MIX_LABEL
     ]
@@ -953,37 +780,30 @@ def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
         }
     )
     authoritative = st.selectbox(
-        "Choose a proposed portfolio",
+        "Authoritative rebalance target",
         options=target_options,
         key="wb_authoritative_target",
-        help="This choice controls the proposal shown here and sent to Portfolio Lab.",
+        help="This single choice controls the latest target, transfer, and Portfolio Lab ticket.",
         **target_kwargs,
     )
     target = study.latest_targets[authoritative]
     provenance = target_provenance(bundle, study, authoritative)
-    st.markdown("### Latest proposed portfolio")
-    st.write(proposed_target_summary(target))
-    st.caption(target_provenance_summary(provenance))
-    if provenance["execution_status"] == "pending_next_trading_close":
-        st.warning(
-            "Proposed, not executed: this target uses the latest completed signal "
-            "and is waiting for the next monthly rebalance trading close."
-        )
-    if authoritative in (VOL_BALANCED_LABEL, VOL_TREND_LABEL):
+    scope_text = (
+        "The proposed target uses the full artifact and does not change with the "
+        "historical chart range."
+        if authoritative in study.allocation_results
+        else "The target is constant; historical results use the committed accounting "
+        f"schedule through {provenance['historical_accounting_schedule_as_of']}."
+    )
+    st.markdown("### Proposed current target")
+    st.caption(
+        target_provenance_summary(provenance)
+        + f" · Artifact generated {provenance['artifact_generated_at_utc']} · "
+        f"Prices through {provenance['price_data_as_of']} · "
+        f"Policy {provenance['policy_version']}. {scope_text}"
+    )
+    if authoritative in study.allocation_results:
         st.caption(study.allocation_results[authoritative].policy.cap_explanation)
-    with st.expander("Target dates and data details"):
-        st.markdown(
-            f"""
-            - **Latest-target status:** {target_provenance_summary(provenance)}
-            - **Displayed historical results through:** {provenance['displayed_history_through']}
-            - **Price artifact through:** {provenance['price_data_as_of']}
-            - **Artifact generated:** {provenance['artifact_generated_at_utc']}
-            - **Rule version:** `{provenance['policy_version']}`
-
-            The latest proposal always uses the full validated artifact. The historical
-            chart endpoint above follows your selected date range and may be earlier.
-            """
-        )
     target_frame = latest_target_download(bundle, study, authoritative)
     target_display = target_frame[["asset", "target_weight", "asset_type"]].copy()
     target_display["asset"] = target_display["asset"].replace({CASH_ASSET: CASH_LABEL})
@@ -1029,6 +849,7 @@ def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
             "artifact_generated_at_utc",
             "price_data_as_of",
             "policy_version",
+            "historical_accounting_schedule_as_of",
             "transaction_cost_bps",
             "current_weights",
             "target_weights",
@@ -1044,153 +865,66 @@ def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
         ):
             st.session_state["portfolio_lab_transfer"] = payload
         if st.session_state.get("portfolio_lab_transfer") is not None:
-            st.success(
-                "Sent successfully. Open the Portfolio Lab tab to review the exact "
-                "current-to-target moves and download a ticket."
-            )
+            st.success("Exact proposed target and current weights are synced to Portfolio Lab.")
     else:
         st.session_state.pop("portfolio_lab_transfer", None)
         st.button(
             "Send proposed target to Portfolio Lab",
             disabled=True,
             key="wb_send_to_portfolio_lab_disabled",
-            help="Enter current weights that total exactly 100% before transferring.",
+            help="Enter valid current weights before transferring a target.",
         )
-        if current_error:
-            st.info("Next step: adjust the current-weight total to exactly 100%.")
-        else:
-            st.info(
-                "Next step: turn on ‘Enter current weights,’ include cash, and make "
-                "the total exactly 100%."
-            )
 
-    st.markdown("### Why each asset has this weight")
+    st.markdown("### Why this weight?")
     explanation = why_this_weight(bundle, study, authoritative)
-    explanation_display = explanation[
-        ["asset", "final_weight", "role", "trend", "reason"]
-    ].rename(
+    explanation_display = explanation.rename(
         columns={
             "asset": "Asset",
-            "final_weight": "Proposed target",
             "role": "Role",
             "trend": "Trend status",
+            "trailing_volatility": "Trailing volatility",
+            "raw_weight": "Uncapped inverse-vol weight",
+            "filtered_raw_weight": "Post-filter raw weight",
+            "final_weight": "Proposed target",
+            "change_vs_uncapped_inverse_vol": "Change vs uncapped inverse-vol",
             "reason": "Reason",
         }
     )
-    explanation_display["Role and signal"] = (
-        explanation_display["Role"]
-        + " · "
-        + explanation_display["Trend status"]
-    )
-    explanation_display = explanation_display[
-        ["Asset", "Proposed target", "Role and signal", "Reason"]
-    ]
-    st.table(
-        explanation_display.style.format(
-            {"Proposed target": "{:.2%}"}, na_rep="—"
-        ).hide(axis="index")
-    )
-
-    with st.expander("Show calculation details"):
-        technical = explanation[
-            [
-                "asset",
-                "trailing_volatility",
-                "raw_weight",
-                "filtered_raw_weight",
-                "final_weight",
-                "change_vs_uncapped_inverse_vol",
-            ]
-        ].rename(
-            columns={
-                "asset": "Asset",
-                "trailing_volatility": "Trailing 126-day volatility",
-                "raw_weight": "Uncapped inverse-vol weight",
-                "filtered_raw_weight": "Post-filter raw weight",
-                "final_weight": "Proposed target",
-                "change_vs_uncapped_inverse_vol": "Change vs uncapped inverse-vol",
-            }
-        )
-        st.dataframe(
-            technical.style.format(
-                {
-                    "Trailing 126-day volatility": "{:.2%}",
-                    "Uncapped inverse-vol weight": "{:.2%}",
-                    "Post-filter raw weight": "{:.2%}",
-                    "Proposed target": "{:.2%}",
-                    "Change vs uncapped inverse-vol": "{:+.2%}",
-                },
-                na_rep="—",
-            ),
-            hide_index=True,
-            width="stretch",
-        )
-
-    st.divider()
-    st.markdown("## Historical comparison")
-    st.caption(
-        f"The charts below end on {study.latest_period_end.date()}. They restart at "
-        "$1 in analytical cash for the selected range; they do not change the latest "
-        "proposal shown above."
-    )
-    _line_chart(study, comparisons, "net_equity", "Growth of $1 after estimated costs")
-    _line_chart(study, comparisons, "drawdown", "Decline from each prior peak", percent=True)
-
-    metrics = _format_metrics(study, comparisons)
-    st.markdown("### Results at a glance")
-    st.caption(
-        "Arrows show the generally preferred direction, not a guarantee of quality. "
-        "Return, volatility, turnover, and cost drag are annualized. One-way turnover "
-        "measures how much of the portfolio is replaced; cost drag is the annualized "
-        "difference between gross and after-cost performance. For drawdown and the "
-        "worst month, a result closer to 0% is less severe. A dash means the metric "
-        "cannot be calculated for the selected history."
-    )
     st.dataframe(
-        metrics.style.format(
+        explanation_display.style.format(
             {
-                "Annualized return ↑": "{:.2%}",
-                "Annualized volatility ↓": "{:.2%}",
-                "Sharpe above cash ↑": "{:.2f}",
-                "Maximum drawdown ↑": "{:.2%}",
-                "Return / drawdown ↑": "{:.2f}",
-                "Worst month ↑": "{:.2%}",
-                "Annualized one-way turnover ↓": "{:.2%}",
-                "Annualized cost drag ↓": "{:.2%}",
+                "Trailing volatility": "{:.2%}",
+                "Uncapped inverse-vol weight": "{:.2%}",
+                "Post-filter raw weight": "{:.2%}",
+                "Proposed target": "{:.2%}",
+                "Change vs uncapped inverse-vol": "{:+.2%}",
             },
             na_rep="—",
         ),
+        hide_index=True,
         width="stretch",
     )
 
-    st.markdown("### How the proposed allocation changed")
-    st.caption(
-        "Weights are plotted on rebalance (execution) dates. The table separates "
-        "the earlier signal date, rebalance date, and end of the resulting holding period."
-    )
+    history = study.backtests[authoritative]
+    st.markdown("### Allocation, turnover, and cost history")
     _allocation_chart(study, authoritative)
-    allocation_download = allocation_history_download(study, authoritative)
-    allocation_history = allocation_download.rename(
-        columns={
-            "rebalance_date": "Rebalance date",
-            "signal_date": "Signal date",
-            "holding_period_end": "Holding-period end",
-            CASH_ASSET: CASH_LABEL,
-            "turnover": "One-way turnover",
-            "estimated_cost_rate": "Estimated cost rate at rebalance",
-        }
-    ).drop(columns=["strategy", "transaction_cost_value"])
+    allocation_history = history.target_weights.copy()
+    allocation_history[CASH_LABEL] = allocation_history.pop(CASH_ASSET)
+    allocation_history.insert(0, "Signal date", history.periods["signal_date"])
+    allocation_history["One-way turnover"] = history.periods["turnover"]
+    allocation_history[
+        "Transaction cost (% of portfolio at rebalance)"
+    ] = history.periods["cost_rate"]
     percentage_columns = [
         *selected,
         CASH_LABEL,
         "One-way turnover",
-        "Estimated cost rate at rebalance",
+        "Transaction cost (% of portfolio at rebalance)",
     ]
     st.dataframe(
         allocation_history.tail(24).style.format(
             {column: "{:.2%}" for column in percentage_columns}
         ),
-        hide_index=True,
         width="stretch",
     )
 
@@ -1209,6 +943,7 @@ def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
         mime="text/csv",
         key="wb_target_download",
     )
+    allocation_download = allocation_history_download(study, authoritative)
     downloads[2].download_button(
         "Download allocation history CSV",
         allocation_download.to_csv(index=False),
@@ -1227,14 +962,13 @@ def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
 
 
 def render_portfolio_lab():
-    """Render the ticket from the exact workbench session target."""
+    """Render the ticket from the exact authoritative workbench session target."""
     st.markdown("## Portfolio Lab")
     transfer = st.session_state.get("portfolio_lab_transfer")
     if not transfer:
         st.info(
-            "No proposal has been sent yet. In ETF Allocation Workbench: (1) choose "
-            "ETFs, (2) turn on Enter current weights and make the total exactly 100%, "
-            "and (3) choose a proposed portfolio and select Send to Portfolio Lab."
+            "Enter valid current weights in ETF Allocation Workbench to sync its "
+            "authoritative latest target and create a ticket."
         )
         return
 
@@ -1245,20 +979,42 @@ def render_portfolio_lab():
     target = pd.Series(transfer["target_weights"], dtype=float).reindex(
         [*selected, CASH_ASSET]
     )
-    include_dollars = st.checkbox(
-        "Add optional dollar estimates",
-        key="portfolio_lab_include_dollars",
-        help="Percentage-point changes work without a portfolio value.",
+    st.markdown("### Exact synced proposed target")
+    st.caption(
+        f"{transfer['strategy']} · "
+        + target_provenance_summary(transfer)
+        + f" · artifact generated {transfer['artifact_generated_at_utc']} · "
+        f"prices through {transfer['price_data_as_of']} · "
+        f"policy {transfer['policy_version']}. These are the exact synced values "
+        "used to build the analytical ticket below."
     )
-    portfolio_value = None
-    if include_dollars:
-        portfolio_value = st.number_input(
-            "Portfolio value",
-            min_value=1.0,
-            value=100000.0,
-            step=1000.0,
-            key="portfolio_lab_value",
+    synced_target = pd.DataFrame(
+        {
+            "Asset": [CASH_LABEL if asset == CASH_ASSET else asset for asset in target.index],
+            "Synced proposed target": target.to_numpy(dtype=float),
+            "Type": [
+                "Analytical cash" if asset == CASH_ASSET else "Tradeable ETF"
+                for asset in target.index
+            ],
+        }
+    )
+    st.dataframe(
+        synced_target.style.format({"Synced proposed target": "{:.2%}"}),
+        hide_index=True,
+        width="stretch",
+    )
+    if transfer["execution_status"] == "pending_next_trading_close":
+        st.warning(
+            "This proposed target is awaiting the next rebalance trading close. "
+            "The ticket is analytical only and does not represent executable orders."
         )
+    portfolio_value = st.number_input(
+        "Portfolio value for optional dollar tickets",
+        min_value=1.0,
+        value=100000.0,
+        step=1000.0,
+        key="portfolio_lab_value",
+    )
     try:
         ticket: RebalanceTicket = build_rebalance_ticket(
             current,
@@ -1271,61 +1027,11 @@ def render_portfolio_lab():
         st.warning(f"Ticket disabled: {exc}")
         return
 
-    st.markdown("### Move from your current mix to the proposal")
-    st.write(ticket_action_summary(ticket))
-    dollar_summary = ticket_dollar_summary(ticket)
-    if dollar_summary:
-        # Streamlit Markdown otherwise treats pairs of dollar signs as inline
-        # math and visually drops the currency symbols from this sentence.
-        st.markdown(dollar_summary.replace("$", r"\$"))
-
-    synced_target = pd.DataFrame(
-        {
-            "Asset": [CASH_LABEL if asset == CASH_ASSET else asset for asset in target.index],
-            "Current weight": current.to_numpy(dtype=float),
-            "Proposed target": target.to_numpy(dtype=float),
-            "Type": [
-                "Analytical cash" if asset == CASH_ASSET else "Tradeable ETF"
-                for asset in target.index
-            ],
-        }
-    )
-    st.dataframe(
-        synced_target.style.format(
-            {"Current weight": "{:.2%}", "Proposed target": "{:.2%}"}
-        ),
-        hide_index=True,
-        width="stretch",
-    )
-    if transfer["execution_status"] == "pending_next_trading_close":
-        st.warning(
-            "This proposed target is awaiting the next rebalance trading close. "
-            "The ticket is analytical only and does not represent executable orders."
-        )
-    with st.expander("Proposal dates and data details"):
-        st.markdown(
-            f"""
-            - **Approach:** {transfer['strategy']}
-            - **Status:** {target_provenance_summary(transfer)}
-            - **Displayed historical results through when sent:** {transfer['displayed_history_through']}
-            - **Artifact generated:** {transfer['artifact_generated_at_utc']}
-            - **Rule version:** `{transfer['policy_version']}`
-            """
-        )
-
     metrics = st.columns(3)
     metrics[0].metric("One-way turnover", f"{ticket.turnover:.2%}")
     metrics[1].metric("Estimated cost rate", f"{ticket.estimated_cost_rate:.3%}")
-    metrics[2].metric(
-        "Estimated cost",
-        "—" if ticket.estimated_cost_amount is None else f"${ticket.estimated_cost_amount:,.2f}",
-    )
-    st.caption(
-        "One-way turnover is half the sum of absolute weight changes. Estimated cost "
-        "equals turnover × the transaction-cost setting. It is shown separately and "
-        "is not deducted from ETF or cash notionals."
-    )
-    st.markdown("### Illustrative ETF changes")
+    metrics[2].metric("Estimated cost", f"${ticket.estimated_cost_amount:,.2f}")
+    st.markdown("### ETF security orders")
     security_display = ticket.security_orders.rename(
         columns={
             "asset": "ETF",
@@ -1376,7 +1082,5 @@ def render_portfolio_lab():
     )
     st.caption(
         "Percentage-point changes and optional dollar notionals reconcile across ETF "
-        "orders and the separate analytical cash balance. The overnight-rate proxy's "
-        "yield can differ from the return on your actual cash account. Cash is never a "
-        "security order, and no orders are placed."
+        "orders and the separate analytical cash balance. No orders are placed."
     )
