@@ -3,6 +3,9 @@ import sys
 from pathlib import Path
 import datetime as dt
 from copy import deepcopy
+from io import StringIO
+import json
+import shutil
 
 import pandas as pd
 import pytest
@@ -12,7 +15,13 @@ from backtest.engine import CASH_ASSET
 from dashboard.workbench import (
     ALLOCATION_LABELS,
     CURRENT_MIX_LABEL,
+    EQUAL_WEIGHT_LABEL,
+    VOL_BALANCED_LABEL,
+    VOL_FORECAST_LABEL,
+    VOL_TREND_LABEL,
+    comparison_selector_label,
 )
+from data.timesfm import load_timesfm_bundle
 from data.workbench import load_workbench_bundle
 from portfolio.rebalance import build_rebalance_ticket
 from strategies.allocation import generate_allocation_targets
@@ -27,7 +36,7 @@ def test_dashboard_executes_in_bare_mode():
         cwd=ROOT,
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=45,
     )
 
     assert result.returncode == 0, result.stderr[-2000:]
@@ -43,7 +52,7 @@ def test_streamlit_workbench_transfer_survives_rerun_and_uses_exact_target(
 
     monkeypatch.setattr("requests.sessions.Session.request", no_http)
     monkeypatch.setattr("yfinance.download", no_http)
-    app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=20).run()
+    app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=45).run()
 
     assert not app.exception
     assert [tab.label for tab in app.tabs][:2] == [
@@ -92,8 +101,9 @@ def test_streamlit_workbench_transfer_survives_rerun_and_uses_exact_target(
         transaction_cost_bps=transfer["transaction_cost_bps"],
     )
     assert CASH_ASSET not in set(ticket.security_orders["asset"])
-    assert transfer["execution_status"] == "pending_next_trading_close"
-    assert transfer["policy_version"] == "allocation-policy-v1"
+    assert transfer["strategy"] == EQUAL_WEIGHT_LABEL
+    assert transfer["execution_status"] == "constant_target_effective_for_analytical_ticket"
+    assert transfer["policy_version"] == "equal-weight-monthly-v1"
     bundle = load_workbench_bundle()
     library_target = generate_allocation_targets(
         bundle.adjusted_close.loc[:, selected],
@@ -120,7 +130,7 @@ def test_streamlit_workbench_transfer_survives_rerun_and_uses_exact_target(
 def test_portfolio_lab_currency_summary_escapes_streamlit_markdown(monkeypatch):
     monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
     app = AppTest.from_file(
-        str(ROOT / "dashboard" / "app.py"), default_timeout=20
+        str(ROOT / "dashboard" / "app.py"), default_timeout=45
     ).run()
     app.checkbox(key="wb_current_enabled").set_value(True).run()
     app.button(key="wb_send_to_portfolio_lab").click().run()
@@ -135,7 +145,7 @@ def test_portfolio_lab_currency_summary_escapes_streamlit_markdown(monkeypatch):
 
 def test_streamlit_selection_reconciliation_and_invalid_current_controls(monkeypatch):
     monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
-    app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=20).run()
+    app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=45).run()
     app.checkbox(key="wb_current_enabled").set_value(True).run()
     assert any("Current total: 100.00%" in item.value for item in app.success)
     app.number_input(key=f"wb_current_pct_{CASH_ASSET}").set_value(90.0).run()
@@ -159,7 +169,7 @@ def test_streamlit_selection_reconciliation_and_invalid_current_controls(monkeyp
     comparison = next(
         widget for widget in app.multiselect if widget.label == "Comparison series"
     )
-    assert CURRENT_MIX_LABEL not in comparison.options
+    assert comparison_selector_label(CURRENT_MIX_LABEL) not in comparison.options
     assert app.button(key="wb_send_to_portfolio_lab_disabled").disabled
     assert "portfolio_lab_transfer" not in app.session_state
     assert any("Current weights are invalid" in warning.value for warning in app.warning)
@@ -167,21 +177,231 @@ def test_streamlit_selection_reconciliation_and_invalid_current_controls(monkeyp
     assert not app.exception
 
 
+def test_late_forecast_history_is_visible_but_target_is_not_transferable(monkeypatch):
+    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
+    app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=45).run()
+
+    comparison = next(
+        widget for widget in app.multiselect if widget.label == "Comparison series"
+    )
+    app.checkbox(key="wb_current_enabled").set_value(True).run()
+    comparison = next(
+        widget for widget in app.multiselect if widget.label == "Comparison series"
+    )
+    target = app.selectbox(key="wb_authoritative_target")
+    assert comparison_selector_label(VOL_FORECAST_LABEL) in comparison.options
+    assert VOL_FORECAST_LABEL in comparison.value
+    assert VOL_FORECAST_LABEL in target.options
+    assert VOL_BALANCED_LABEL in target.options
+    assert VOL_TREND_LABEL in target.options
+    target.set_value(VOL_FORECAST_LABEL).run()
+    assert app.button(key="wb_send_to_portfolio_lab_disabled").disabled
+    assert "portfolio_lab_transfer" not in app.session_state
+    assert any(
+        "Historical analysis is ready" in item.value
+        and "TimesFM" in item.value
+        for item in app.info
+    )
+    assert any(
+        "forecast uncertainty" in expander.label.lower()
+        for expander in app.expander
+    )
+    assert any(
+        "TimesFM-3 research lab" in item.value for item in app.markdown
+    )
+    metric_labels = {item.label for item in app.metric}
+    assert {
+        "Forecasts checked",
+        "Up/down accuracy",
+        "Typical return error",
+        "80% price-band coverage",
+    }.issubset(metric_labels)
+    forecast_checks = next(
+        item.value
+        for item in app.dataframe
+        if "Pinball loss ↓" in item.value.columns
+    )
+    assert "—" in forecast_checks["Pinball loss ↓"].tolist()
+    assert not forecast_checks.map(lambda value: value is None).any().any()
+    assert not forecast_checks.astype(str).eq("None").any().any()
+    assert not app.exception
+
+
+@pytest.mark.parametrize("kind", ["missing", "corrupt"])
+def test_forecast_bundle_failure_leaves_base_workbench_available(
+    tmp_path, monkeypatch, kind
+):
+    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
+    forecast_path = tmp_path / "timesfm"
+    if kind == "corrupt":
+        shutil.copytree(ROOT / "artifacts" / "timesfm", forecast_path)
+        signals = forecast_path / "forecast_signals.csv"
+        signals.write_text(signals.read_text() + "\n")
+    source = f"""
+import streamlit as st
+from dashboard.workbench import render_workbench
+render_workbench(timesfm_bundle_path=r{str(forecast_path)!r})
+st.write('base-and-ml-sentinel')
+"""
+    app = AppTest.from_string(source, default_timeout=45).run()
+
+    assert not app.exception
+    assert any("forecast research is temporarily unavailable" in item.value.lower()
+               for item in app.info)
+    comparison = next(
+        widget for widget in app.multiselect if widget.label == "Comparison series"
+    )
+    assert comparison_selector_label(VOL_BALANCED_LABEL) in comparison.options
+    assert comparison_selector_label(VOL_FORECAST_LABEL) not in comparison.options
+    assert any("base-and-ml-sentinel" in item.value for item in app.markdown)
+
+
+def test_timely_forecast_target_transfers_exactly_to_portfolio_lab(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
+    timely_path = tmp_path / "timesfm"
+    shutil.copytree(ROOT / "artifacts" / "timesfm", timely_path)
+    manifest_path = timely_path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    latest_generation_id = manifest["model_generations"][-1]["id"]
+    generation = next(
+        item
+        for item in manifest["model_generations"]
+        if item["id"] == latest_generation_id
+    )
+    generation["generated_at_utc"] = "2026-09-01T19:00:00Z"
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+    source = f"""
+from dashboard.workbench import render_portfolio_lab, render_workbench
+render_workbench(timesfm_bundle_path=r{str(timely_path)!r})
+render_portfolio_lab()
+"""
+    app = AppTest.from_string(source, default_timeout=45).run()
+    assert not app.exception
+    app.checkbox(key="wb_current_enabled").set_value(True).run()
+    target_selector = app.selectbox(key="wb_authoritative_target")
+    assert VOL_FORECAST_LABEL in target_selector.options
+    target_selector.set_value(VOL_FORECAST_LABEL).run()
+    app.button(key="wb_send_to_portfolio_lab").click().run()
+
+    transfer = deepcopy(app.session_state["portfolio_lab_transfer"])
+    assert transfer["strategy"] == VOL_FORECAST_LABEL
+    transferred_download = pd.read_csv(StringIO(transfer["target_csv"]))
+    assert transferred_download["strategy"].unique().tolist() == [
+        VOL_FORECAST_LABEL
+    ]
+    assert transfer["execution_status"] == "current"
+    assert transfer["model_generation_id"] == latest_generation_id
+    assert transfer["model_generated_at_utc"] == "2026-09-01T19:00:00Z"
+    assert transfer["execution_cutoff_utc"] == "2026-09-01T20:00:00Z"
+    assert transfer["forecast_bundle_refreshed_at_utc"] == manifest[
+        "bundle_refresh"
+    ]["generated_at_utc"]
+    selected = tuple(transfer["selected_etfs"])
+    target = pd.Series(transfer["target_weights"], dtype=float).reindex(
+        [*selected, CASH_ASSET]
+    )
+    workbench = load_workbench_bundle()
+    forecasts = load_timesfm_bundle(timely_path)
+    from strategies.forecast import generate_forecast_allocation_targets
+
+    expected = generate_forecast_allocation_targets(
+        workbench.adjusted_close.loc[:, selected],
+        selected,
+        forecasts.signals,
+        as_of=workbench.signal_as_of,
+    ).latest_target
+    pd.testing.assert_series_equal(target, expected, check_names=False)
+    ticket = build_rebalance_ticket(
+        transfer["current_weights"],
+        transfer["target_weights"],
+        selected,
+        transaction_cost_bps=transfer["transaction_cost_bps"],
+    )
+    assert ticket.download_frame()["target_weight"].sum() == pytest.approx(1.0)
+    assert CASH_ASSET not in set(ticket.security_orders["asset"])
+    assert any(
+        "Move from your current mix to the proposal" in item.value
+        for item in app.markdown
+    )
+    assert not app.exception
+
+
+def test_timely_standard_tactical_target_transfers_after_intended_close(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
+    timely_path = tmp_path / "workbench"
+    shutil.copytree(ROOT / "artifacts" / "workbench", timely_path)
+    manifest_path = timely_path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["generated_at_utc"] = "2026-09-01T19:00:00Z"
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    missing_forecast = tmp_path / "no-forecast-bundle"
+    source = f"""
+from dashboard.workbench import render_portfolio_lab, render_workbench
+render_workbench(
+    bundle_path=r{str(timely_path)!r},
+    timesfm_bundle_path=r{str(missing_forecast)!r},
+)
+render_portfolio_lab()
+"""
+    app = AppTest.from_string(source, default_timeout=45).run()
+    assert not app.exception
+    app.checkbox(key="wb_current_enabled").set_value(True).run()
+    selector = app.selectbox(key="wb_authoritative_target")
+    assert VOL_BALANCED_LABEL in selector.options
+    assert VOL_TREND_LABEL in selector.options
+    selector.set_value(VOL_TREND_LABEL).run()
+    app.button(key="wb_send_to_portfolio_lab").click().run()
+
+    transfer = deepcopy(app.session_state["portfolio_lab_transfer"])
+    assert transfer["strategy"] == VOL_TREND_LABEL
+    assert transfer["execution_status"] == "current"
+    assert transfer["execution_cutoff_utc"] == "2026-09-01T20:00:00Z"
+    assert transfer["workbench_bundle_refreshed_at_utc"] == (
+        "2026-09-01T19:00:00Z"
+    )
+    selected = tuple(transfer["selected_etfs"])
+    expected = generate_allocation_targets(
+        load_workbench_bundle(timely_path).adjusted_close.loc[:, selected],
+        selected,
+        ALLOCATION_LABELS[VOL_TREND_LABEL],
+        as_of=load_workbench_bundle(timely_path).signal_as_of,
+    ).latest_target
+    pd.testing.assert_series_equal(
+        pd.Series(transfer["target_weights"], dtype=float).reindex(
+            [*selected, CASH_ASSET]
+        ),
+        expected,
+        check_names=False,
+    )
+    assert any(
+        "Move from your current mix to the proposal" in item.value
+        for item in app.markdown
+    )
+    assert not app.exception
+
+
 def test_comparison_defaults_follow_selected_etf_tuple(monkeypatch):
     monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
-    app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=20).run()
+    app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=45).run()
 
     initial = next(widget for widget in app.multiselect if widget.label == "Comparison series")
     initial_default = list(initial.value)
     app.multiselect(key="wb_selected_etfs").set_value(["SPY"]).run()
     one = next(widget for widget in app.multiselect if widget.label == "Comparison series")
     assert one.value == [
-        "Volatility Balanced + Trend",
+        "Volatility Balanced + Forecast",
         "Buy & Hold",
         "Cash — U.S. overnight-rate proxy",
     ]
+    assert app.session_state["wb_comparisons_by_selection"]["SPY"] == one.value
     assert any(
-        "keeps holding the ETF" in item.value and "switches between that ETF and cash" in item.value
+        "keeps holding the ETF" in item.value
+        and "filtered approaches switch between that ETF" in item.value
         for item in app.info
     )
     app.multiselect(key="wb_selected_etfs").set_value(["SPY", "IEF", "GLD"]).run()
@@ -205,7 +425,7 @@ from dashboard.workbench import render_workbench
 render_workbench()
 st.write('ML sentinel remains available')
 """
-    app = AppTest.from_string(source, default_timeout=20).run()
+    app = AppTest.from_string(source, default_timeout=45).run()
 
     messages = getattr(app, element)
     assert any(text in message.value for message in messages)

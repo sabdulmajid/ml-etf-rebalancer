@@ -58,6 +58,34 @@ This project does **not** claim that the ML strategy beats SPY. The value is in 
   cannot read or write the workbench target, transfer, or ticket
 - Read-only dashboard backed by committed `artifacts/latest` files, so visitors are not triggering model training or data writes
 
+## Try The TimesFM-3 Research Lab
+
+1. Open **ETF Allocation Workbench** and keep the default `SPY` / `IEF` / `GLD`
+   portfolio, or choose one to eight curated ETFs.
+2. Keep **Forecast filter**, **Equal Weight**, and **SPY reference** selected for a
+   readable apples-to-apples comparison.
+3. Read the TimesFM scorecards first: they show forecast error, direction accuracy,
+   uncertainty coverage, and whether using all 14 ETF histories improved on the
+   one-series model.
+4. Read the plain-language portfolio verdict. It states when the forecast filter
+   improved a result, when evidence is mixed, and how much extra turnover it created.
+5. Open **Audit past TimesFM forecasts**, choose any selected ETF, and hover the
+   median forecast, realized one-month return, and contemporaneous cash hurdle.
+6. Inspect the latest recorded ETF-versus-cash decisions. Historical-only targets
+   remain inspectable and downloadable, but only current or constant targets can be
+   sent to Portfolio Lab.
+
+This is intentionally an honest model audit rather than an “AI wins” demo. The
+committed replay currently shows only a modest multivariate forecasting improvement,
+and the forecast-filtered portfolio can underperform a simple reference after costs.
+Surfacing that result is part of the project’s value: visitors can distinguish forecast
+quality, allocation logic, portfolio outcomes, and execution readiness instead of
+being shown a single flattering backtest.
+
+![TimesFM-3 research scorecard and portfolio verdict](docs/screenshots/timesfm/research-lab.png)
+
+![Interactive historical TimesFM forecast audit](docs/screenshots/timesfm/replay-audit.png)
+
 ## Quickstart
 
 ```bash
@@ -122,8 +150,11 @@ a predictive distribution. TimesFM's q10 and q90 values are marginal future
 price quantiles at each horizon; they are not an 80% interval for the derived
 holding return. The evaluation is a historical replay, not an out-of-sample
 claim, and overlap between the model's pretraining data and these dates is
-unknown. The bundle is not yet rendered by Streamlit; that integration is
-deliberately isolated to a later change.
+unknown. Streamlit now reads this committed bundle locally and exposes one
+additional research comparison, **Volatility Balanced + Forecast**. TimesFM's
+median forecast is only a binary eligibility gate: an ETF must clear the cash
+hurdle, after which the existing inverse-volatility and adaptive-cap rules set
+its weight. Forecast magnitude never scales allocation.
 
 ## Methodology
 
@@ -141,6 +172,16 @@ Latest targets always use the entire artifact. Changing the historical chart
 range only changes the displayed backtest, which restarts from 100% cash. A
 valid entered Current Mix is a hypothetical constant target reset monthly, not
 a reconstruction of actual holdings history.
+
+When the forecast comparison is selected, every displayed history aligns to its
+completed replay periods. When it is not selected, standard approaches retain
+their longer native history. `SPY — U.S. equity reference` uses the same engine,
+dates, costs, and cash accounting as the other displayed lines. Tactical latest
+targets are transferable only after they were produced before their intended
+execution close and while their holding window remains current. Their model
+generation, workbench refresh, and forecast-bundle refresh timestamps are shown
+separately. Missing, corrupt, scheduled, late, or expired forecast artifacts
+never disable the base workbench or the existing ML views.
 
 **Cash — U.S. overnight-rate proxy** uses official EFFR before April 2, 2018 and
 official SOFR from that date, with Actual/360 accrual. It is analytical and
@@ -188,6 +229,7 @@ data/features.py        Feature engineering
 portfolio/rebalance.py  ML allocation helper plus workbench ticket validation
 portfolio/research.py   Walk-forward research engine
 strategies/allocation.py Fixed workbench target generators
+strategies/forecast.py  TimesFM binary-filter target generator
 forecasting/             Offline TimesFM timing, inference, and evaluation
 build_timesfm_artifacts.py Offline deterministic forecast artifact builder
 tests/                  Local validation tests
