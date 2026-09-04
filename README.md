@@ -14,6 +14,7 @@ Live app: https://etf-rebalancer.streamlit.app/
 - No-lookahead backtesting with transaction-cost assumptions
 - One common monthly engine for every workbench strategy and benchmark
 - Fixed Volatility Balanced, Volatility Balanced + Trend, and Equal Weight policies
+- Offline TimesFM-3 multivariate/univariate forecast research with a last-value baseline
 - Explicit analytical cash, current-weight validation, and reconciled ETF tickets
 - Portfolio construction with long-only, top-sector, and max-weight constraints
 - Benchmarking against `SPY`, equal-weight sectors, and a simple momentum baseline
@@ -85,6 +86,38 @@ make refresh     # rebuild artifacts only
 make app         # launch the dashboard
 ```
 
+### Optional TimesFM-3 research build
+
+TimesFM-3 is an offline artifact builder, not a Streamlit runtime dependency.
+Install its isolated dependency set only on the machine used to generate
+forecasts:
+
+```bash
+python -m venv .venv-timesfm
+source .venv-timesfm/bin/activate
+python -m pip install -r requirements-timesfm.txt
+python build_timesfm_artifacts.py --device cpu
+```
+
+Use `--device cuda` on a compatible GPU. The first run downloads the pinned
+checkpoint and produces the full historical research bundle; later runs reuse
+unchanged month/model results and calculate only missing origins. For an
+air-gapped refresh after the checkpoint is cached, pass both `--cache-dir PATH`
+and `--local-files-only`. `--full` intentionally ignores reusable results.
+
+The model always receives all 14 approved adjusted-close series jointly using
+exactly 512 completed XNYS sessions. It has no covariates and is not fine-tuned.
+For each completed month, forecast step one is the following trading session
+and the final step is the next monthly execution date. The research score is
+the median forecast at period end divided by the median forecast at execution,
+minus one. The last safely known EFFR/SOFR observation must have an effective
+date strictly before the signal date; its Actual/360 return is retained as the
+cash hurdle.
+
+The committed research bundle contains TimesFM-3 multivariate and univariate
+results plus a flat last-value forecast. It is not yet rendered by Streamlit;
+that integration is deliberately isolated to a later change.
+
 ## Methodology
 
 ### ETF Allocation Workbench
@@ -132,19 +165,15 @@ pytest -q
 python tools/benchmark.py --pipeline
 ```
 
-Recent local validation:
-
-```text
-pytest -q                              7 passed
-python tools/benchmark.py              dashboard bare execution: ~2.0s
-python run_pipeline.py                 full artifact refresh: ~22s
-```
+The exact passing test count and artifact-build timings are recorded in each
+pull request because both change as the research system grows.
 
 ## Project Structure
 
 ```text
 artifacts/latest/       Stable dashboard-ready research outputs
 artifacts/workbench/    Validated ETF and analytical-cash bundle
+artifacts/timesfm/       Validated offline forecast research bundle
 dashboard/app.py        Streamlit research terminal
 dashboard/workbench.py  Workbench calculations, downloads, and UI
 backtest/               Common monthly accounting and metrics
@@ -152,6 +181,8 @@ data/features.py        Feature engineering
 portfolio/rebalance.py  ML allocation helper plus workbench ticket validation
 portfolio/research.py   Walk-forward research engine
 strategies/allocation.py Fixed workbench target generators
+forecasting/             Offline TimesFM timing, inference, and evaluation
+build_timesfm_artifacts.py Offline deterministic forecast artifact builder
 tests/                  Local validation tests
 tools/benchmark.py      Local health and benchmark script
 run_pipeline.py         Artifact refresh entrypoint
