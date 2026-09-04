@@ -500,12 +500,14 @@ st.markdown(
         <div class="eyebrow">Transparent ETF portfolio research</div>
         <h1 class="hero-title">ETF Research Studio</h1>
         <div class="hero-copy">
-            Explore fixed, explainable ETF allocation policies and inspect the existing walk-forward
-            machine-learning sector study. Both experiences use committed, reviewable artifacts and
-            are educational analytics only; this application never places orders.
+            Build ETF portfolios, test whether a zero-shot TimesFM-3 forecast filter adds value, and
+            inspect the existing walk-forward machine-learning sector study. Every result comes from
+            committed, reviewable artifacts and common portfolio accounting; this application never
+            places orders.
         </div>
         <div class="pill-row">
             <div class="pill">Allocation Workbench: 14 curated ETFs</div>
+            <div class="pill">TimesFM-3 forecast audit</div>
             <div class="pill">ML study through {manifest["data_end"]}</div>
             <div class="pill">Local committed artifacts</div>
             <div class="pill">No brokerage connection</div>

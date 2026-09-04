@@ -26,6 +26,12 @@ from dashboard.workbench import (
     bundle_fingerprint,
     clear_workbench_caches,
     comparison_selector_label,
+    default_comparisons,
+    forecast_portfolio_comparison,
+    forecast_portfolio_verdict,
+    forecast_replay_frame,
+    forecast_replay_summary,
+    forecast_skill_snapshot,
     current_weight_status,
     forecast_check_summary,
     forecast_checks_for_display,
@@ -405,6 +411,100 @@ def test_every_comparison_has_a_distinct_compact_selector_label():
     }
     with pytest.raises(ValueError, match="unknown comparison label"):
         comparison_selector_label("Unregistered comparison")
+
+
+def test_default_comparisons_focus_on_forecast_and_simple_reference():
+    one = available_comparisons(["SPY"], forecast_available=True)
+    many = available_comparisons(["SPY", "IEF", "GLD"], forecast_available=True)
+
+    assert default_comparisons(["SPY"], one) == [
+        VOL_FORECAST_LABEL,
+        BUY_HOLD_LABEL,
+        CASH_LABEL_SHORT,
+    ]
+    assert default_comparisons(["SPY", "IEF", "GLD"], many) == [
+        VOL_FORECAST_LABEL,
+        EQUAL_WEIGHT_LABEL,
+        SPY_REFERENCE_LABEL,
+    ]
+
+
+def test_timesfm_skill_snapshot_and_replay_are_honest_and_realized_only():
+    forecasts = load_timesfm_bundle()
+    snapshot = forecast_skill_snapshot(forecasts.metrics)
+    replay = forecast_replay_frame(
+        forecasts.signals,
+        "SPY",
+        start="2020-01-01",
+        end="2026-08-31",
+    )
+    summary = forecast_replay_summary(replay)
+
+    assert snapshot["observations"] == 2870
+    assert snapshot["directional_accuracy"] == pytest.approx(0.560279, abs=1e-6)
+    assert snapshot["mae_improvement_vs_univariate"] > 0.0
+    assert snapshot["mae_improvement_vs_last_value"] > 0.0
+    assert set(replay["evaluation_status"]) == {"realized"}
+    assert replay["ticker"].unique().tolist() == ["SPY"]
+    assert replay["period_end_date"].max() <= pd.Timestamp("2026-08-31")
+    assert 0.0 <= summary["cash_gate_accuracy"] <= 1.0
+    assert summary["return_mae"] > 0.0
+    assert 0.0 <= summary["interval_80_coverage"] <= 1.0
+
+
+def test_forecast_portfolio_verdict_uses_same_range_and_plain_language(bundle):
+    forecasts = load_timesfm_bundle()
+    result = generate_forecast_allocation_targets(
+        bundle.adjusted_close.loc[:, DEFAULT_SELECTION],
+        DEFAULT_SELECTION,
+        forecasts.signals,
+        as_of=bundle.signal_as_of,
+    )
+    study = build_workbench_study(
+        bundle,
+        DEFAULT_SELECTION,
+        forecast_result=result,
+        forecast_manifest=forecasts.manifest,
+        forecast_freshness=forecasts.freshness(as_of="2026-09-05"),
+        comparison_labels=[VOL_FORECAST_LABEL, EQUAL_WEIGHT_LABEL],
+        start="2020-01-01",
+        end="2026-08-31",
+    )
+    comparison = forecast_portfolio_comparison(study)
+    verdict = forecast_portfolio_verdict(comparison)
+
+    assert comparison["benchmark"] == EQUAL_WEIGHT_LABEL
+    assert comparison["forecast_return"] == pytest.approx(
+        study.backtests[VOL_FORECAST_LABEL].metrics["annualized_return"]
+    )
+    assert "descriptive historical replay" in verdict
+    assert EQUAL_WEIGHT_LABEL in verdict
+
+    too_short = dict(comparison, sharpe_delta=np.nan)
+    assert "too short" in forecast_portfolio_verdict(too_short)
+
+
+def test_forecast_portfolio_comparison_rejects_misaligned_histories(bundle):
+    forecasts = load_timesfm_bundle()
+    result = generate_forecast_allocation_targets(
+        bundle.adjusted_close.loc[:, DEFAULT_SELECTION],
+        DEFAULT_SELECTION,
+        forecasts.signals,
+        as_of=bundle.signal_as_of,
+    )
+    study = build_workbench_study(
+        bundle,
+        DEFAULT_SELECTION,
+        forecast_result=result,
+        forecast_manifest=forecasts.manifest,
+        forecast_freshness=forecasts.freshness(as_of="2026-09-05"),
+        comparison_labels=[EQUAL_WEIGHT_LABEL],
+        start="2020-01-01",
+        end="2026-08-31",
+    )
+
+    with pytest.raises(ValueError, match="identical holding periods"):
+        forecast_portfolio_comparison(study)
 
 
 def test_explanation_has_required_semantics_and_cash_label(bundle):

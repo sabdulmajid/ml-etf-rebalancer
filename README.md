@@ -58,6 +58,34 @@ This project does **not** claim that the ML strategy beats SPY. The value is in 
   cannot read or write the workbench target, transfer, or ticket
 - Read-only dashboard backed by committed `artifacts/latest` files, so visitors are not triggering model training or data writes
 
+## Try The TimesFM-3 Research Lab
+
+1. Open **ETF Allocation Workbench** and keep the default `SPY` / `IEF` / `GLD`
+   portfolio, or choose one to eight curated ETFs.
+2. Keep **Forecast filter**, **Equal Weight**, and **SPY reference** selected for a
+   readable apples-to-apples comparison.
+3. Read the TimesFM scorecards first: they show forecast error, direction accuracy,
+   uncertainty coverage, and whether using all 14 ETF histories improved on the
+   one-series model.
+4. Read the plain-language portfolio verdict. It states when the forecast filter
+   improved a result, when evidence is mixed, and how much extra turnover it created.
+5. Open **Audit past TimesFM forecasts**, choose any selected ETF, and hover the
+   median forecast, realized one-month return, and contemporaneous cash hurdle.
+6. Inspect the latest recorded ETF-versus-cash decisions. Historical-only targets
+   remain inspectable and downloadable, but only current or constant targets can be
+   sent to Portfolio Lab.
+
+This is intentionally an honest model audit rather than an “AI wins” demo. The
+committed replay currently shows only a modest multivariate forecasting improvement,
+and the forecast-filtered portfolio can underperform a simple reference after costs.
+Surfacing that result is part of the project’s value: visitors can distinguish forecast
+quality, allocation logic, portfolio outcomes, and execution readiness instead of
+being shown a single flattering backtest.
+
+![TimesFM-3 research scorecard and portfolio verdict](docs/screenshots/timesfm/research-lab.png)
+
+![Interactive historical TimesFM forecast audit](docs/screenshots/timesfm/replay-audit.png)
+
 ## Quickstart
 
 ```bash

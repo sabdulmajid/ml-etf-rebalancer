@@ -38,6 +38,7 @@ from data.timesfm import (
     PUBLIC_FILENAMES as TIMESFM_PUBLIC_FILENAMES,
     load_timesfm_bundle,
 )
+from forecasting.timesfm import MULTIVARIATE_MODE
 from portfolio.rebalance import (
     RebalanceTicket,
     build_rebalance_ticket,
@@ -261,6 +262,25 @@ def available_comparisons(
     if current_weights_valid:
         options.append(CURRENT_MIX_LABEL)
     return options
+
+
+def default_comparisons(selected_etfs, options):
+    """Keep the first chart legible while retaining every compatible option."""
+    selected = tuple(selected_etfs)
+    preferred = (
+        [VOL_FORECAST_LABEL, BUY_HOLD_LABEL, CASH_LABEL_SHORT]
+        if len(selected) == 1
+        else [VOL_FORECAST_LABEL, EQUAL_WEIGHT_LABEL, SPY_REFERENCE_LABEL]
+    )
+    defaults = [label for label in preferred if label in options]
+    if defaults:
+        return defaults
+    fallback = (
+        [VOL_TREND_LABEL, BUY_HOLD_LABEL, CASH_LABEL_SHORT]
+        if len(selected) == 1
+        else [VOL_BALANCED_LABEL, EQUAL_WEIGHT_LABEL, SPY_REFERENCE_LABEL]
+    )
+    return [label for label in fallback if label in options]
 
 
 def _constant_schedule(base, selected_etfs, weights):
@@ -965,6 +985,184 @@ def forecast_checks_for_display(checks):
     return display
 
 
+def forecast_skill_snapshot(metrics):
+    """Summarize the three offline forecast experiments in user-facing units."""
+    required = {"last_value", "timesfm3_univariate", "timesfm3_multivariate"}
+    overall = metrics.loc[metrics["scope"] == "overall"].set_index("model_mode")
+    if set(overall.index) != required or not overall.index.is_unique:
+        raise ValueError("forecast metrics do not contain one overall row per model mode")
+    baseline = overall.loc["last_value"]
+    univariate = overall.loc["timesfm3_univariate"]
+    multivariate = overall.loc["timesfm3_multivariate"]
+    baseline_mae = float(baseline["holding_return_mae"])
+    univariate_mae = float(univariate["holding_return_mae"])
+    multivariate_mae = float(multivariate["holding_return_mae"])
+    if min(baseline_mae, univariate_mae, multivariate_mae) <= 0.0:
+        raise ValueError("forecast MAE values must be positive")
+    return {
+        "observations": int(multivariate["observations"]),
+        "directional_accuracy": float(multivariate["directional_accuracy"]),
+        "univariate_directional_accuracy": float(
+            univariate["directional_accuracy"]
+        ),
+        "directional_lift_vs_univariate": float(
+            multivariate["directional_accuracy"]
+            - univariate["directional_accuracy"]
+        ),
+        "return_mae": multivariate_mae,
+        "mae_improvement_vs_univariate": 1.0 - multivariate_mae / univariate_mae,
+        "mae_improvement_vs_last_value": 1.0 - multivariate_mae / baseline_mae,
+        "interval_80_coverage": float(multivariate["interval_80_coverage"]),
+    }
+
+
+def forecast_portfolio_comparison(study):
+    """Compare the forecast filter with the simplest investable reference."""
+    if VOL_FORECAST_LABEL not in study.backtests:
+        raise ValueError("forecast backtest is unavailable")
+    benchmark = BUY_HOLD_LABEL if len(study.selected_etfs) == 1 else EQUAL_WEIGHT_LABEL
+    if benchmark not in study.backtests:
+        raise ValueError(f"required comparison is unavailable: {benchmark}")
+    forecast_periods = study.backtests[VOL_FORECAST_LABEL].periods.index
+    benchmark_periods = study.backtests[benchmark].periods.index
+    if not forecast_periods.equals(benchmark_periods):
+        raise ValueError("forecast and benchmark must use identical holding periods")
+    forecast = study.backtests[VOL_FORECAST_LABEL].metrics
+    reference = study.backtests[benchmark].metrics
+    return {
+        "benchmark": benchmark,
+        "forecast_return": float(forecast["annualized_return"]),
+        "benchmark_return": float(reference["annualized_return"]),
+        "return_delta": float(
+            forecast["annualized_return"] - reference["annualized_return"]
+        ),
+        "forecast_sharpe": float(forecast["excess_return_sharpe"]),
+        "benchmark_sharpe": float(reference["excess_return_sharpe"]),
+        "sharpe_delta": float(
+            forecast["excess_return_sharpe"] - reference["excess_return_sharpe"]
+        ),
+        "forecast_drawdown": float(forecast["max_drawdown"]),
+        "benchmark_drawdown": float(reference["max_drawdown"]),
+        "drawdown_improvement": float(
+            forecast["max_drawdown"] - reference["max_drawdown"]
+        ),
+        "forecast_turnover": float(forecast["annualized_turnover"]),
+        "benchmark_turnover": float(reference["annualized_turnover"]),
+        "turnover_delta": float(
+            forecast["annualized_turnover"] - reference["annualized_turnover"]
+        ),
+    }
+
+
+def forecast_portfolio_verdict(comparison):
+    """State a deliberately restrained conclusion from the selected-range results."""
+    required = (
+        "return_delta",
+        "sharpe_delta",
+        "drawdown_improvement",
+        "turnover_delta",
+    )
+    if not all(np.isfinite(float(comparison[name])) for name in required):
+        return (
+            f"The selected history is too short to calculate a complete Forecast "
+            f"versus {comparison['benchmark']} verdict. Extend the historical range "
+            "before interpreting portfolio value."
+        )
+    return_better = comparison["return_delta"] > 0.0
+    sharpe_better = comparison["sharpe_delta"] > 0.0
+    drawdown_better = comparison["drawdown_improvement"] > 0.0
+    if return_better and sharpe_better:
+        lead = "The forecast filter improved both return and risk-adjusted return"
+    elif drawdown_better and not (return_better and sharpe_better):
+        lead = "The evidence is mixed: the forecast filter reduced the worst drawdown"
+    else:
+        lead = "The forecast filter did not improve return, Sharpe, or the worst drawdown"
+    return (
+        f"{lead} versus {comparison['benchmark']} over this selected history. "
+        f"Annualized return changed by {comparison['return_delta'] * 100:+.2f} "
+        f"percentage points, Sharpe by {comparison['sharpe_delta']:+.2f}, the "
+        f"maximum-drawdown result by {comparison['drawdown_improvement'] * 100:+.2f} "
+        f"percentage points, and annualized turnover by "
+        f"{comparison['turnover_delta'] * 100:+.2f} percentage points. This is "
+        "descriptive historical replay, "
+        "not evidence that the model will add value live."
+    )
+
+
+def forecast_replay_frame(signals, ticker, *, start=None, end=None):
+    """Return realized multivariate decisions for an interactive ETF audit."""
+    required = {
+        "model_mode",
+        "ticker",
+        "signal_date",
+        "period_end_date",
+        "forecast_holding_return",
+        "cash_hurdle",
+        "forecast_edge",
+        "actual_holding_return",
+        "q10_period_end_price",
+        "q90_period_end_price",
+        "actual_period_end_price",
+        "evaluation_status",
+    }
+    missing = sorted(required - set(signals.columns))
+    if missing:
+        raise ValueError(f"forecast replay is missing columns: {missing}")
+    rows = signals.loc[
+        (signals["model_mode"] == MULTIVARIATE_MODE)
+        & (signals["ticker"] == ticker)
+        & (signals["evaluation_status"] == "realized"),
+        list(required),
+    ].copy()
+    if rows.empty:
+        raise ValueError(f"no realized multivariate forecasts are available for {ticker}")
+    rows["signal_date"] = pd.to_datetime(rows["signal_date"], errors="raise")
+    rows["period_end_date"] = pd.to_datetime(rows["period_end_date"], errors="raise")
+    if start is not None:
+        rows = rows.loc[rows["period_end_date"] >= pd.Timestamp(start)]
+    if end is not None:
+        rows = rows.loc[rows["period_end_date"] <= pd.Timestamp(end)]
+    if rows.empty:
+        raise ValueError(f"no realized {ticker} forecasts fall in the selected history")
+    numeric = [
+        "forecast_holding_return",
+        "cash_hurdle",
+        "forecast_edge",
+        "actual_holding_return",
+        "q10_period_end_price",
+        "q90_period_end_price",
+        "actual_period_end_price",
+    ]
+    rows[numeric] = rows[numeric].apply(pd.to_numeric, errors="raise")
+    if not np.isfinite(rows[numeric].to_numpy(dtype=float)).all():
+        raise ValueError("forecast replay contains non-finite values")
+    rows["actual_edge"] = rows["actual_holding_return"] - rows["cash_hurdle"]
+    rows["cash_gate_correct"] = (rows["forecast_edge"] > 0.0) == (
+        rows["actual_edge"] > 0.0
+    )
+    rows["interval_hit"] = (
+        (rows["actual_period_end_price"] >= rows["q10_period_end_price"])
+        & (rows["actual_period_end_price"] <= rows["q90_period_end_price"])
+    )
+    return rows.sort_values("period_end_date").reset_index(drop=True)
+
+
+def forecast_replay_summary(replay):
+    """Summarize exactly the realized rows displayed by the replay explorer."""
+    if replay.empty:
+        raise ValueError("forecast replay cannot be empty")
+    return {
+        "observations": int(len(replay)),
+        "cash_gate_accuracy": float(replay["cash_gate_correct"].mean()),
+        "return_mae": float(
+            (replay["forecast_holding_return"] - replay["actual_holding_return"])
+            .abs()
+            .mean()
+        ),
+        "interval_80_coverage": float(replay["interval_hit"].mean()),
+    }
+
+
 def _line_chart(study, labels, column, title, percent=False):
     figure = go.Figure()
     for label in labels:
@@ -994,6 +1192,53 @@ def _line_chart(study, labels, column, title, percent=False):
         hovermode="x unified",
     )
     st.plotly_chart(figure, width="stretch")
+
+
+def _forecast_replay_chart(replay, ticker):
+    """Plot forecast, realized return, and the contemporaneous cash hurdle."""
+    figure = go.Figure()
+    figure.add_trace(
+        go.Scatter(
+            x=replay["period_end_date"],
+            y=replay["actual_holding_return"],
+            mode="lines",
+            name="Realized ETF return",
+            line=dict(color="#17211f", width=2),
+            hovertemplate="%{x|%b %Y}<br>%{y:+.2%}<extra>Realized</extra>",
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=replay["period_end_date"],
+            y=replay["forecast_holding_return"],
+            mode="lines",
+            name="TimesFM median forecast",
+            line=dict(color="#0c6148", width=2),
+            hovertemplate="%{x|%b %Y}<br>%{y:+.2%}<extra>Forecast</extra>",
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=replay["period_end_date"],
+            y=replay["cash_hurdle"],
+            mode="lines",
+            name="Cash hurdle",
+            line=dict(color="#b6782f", width=1.5, dash="dot"),
+            hovertemplate="%{x|%b %Y}<br>%{y:.2%}<extra>Cash hurdle</extra>",
+        )
+    )
+    figure.add_hline(y=0.0, line_width=1, line_color="rgba(23,33,31,0.25)")
+    figure.update_layout(
+        title=f"{ticker}: one-month forecast versus realized return",
+        height=360,
+        margin=dict(l=10, r=10, t=50, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(255,250,240,0.45)",
+        legend=dict(orientation="h", y=1.12),
+        yaxis=dict(tickformat="+.0%"),
+        hovermode="x unified",
+    )
+    st.plotly_chart(figure, width="stretch", key=f"wb_forecast_replay_{ticker}")
 
 
 def _allocation_chart(study, label, *, key):
@@ -1183,12 +1428,15 @@ def render_workbench(
     """Render the isolated first-tab workbench and populate Portfolio Lab state."""
     st.markdown("## ETF Allocation Workbench")
     st.write(
-        "Build and compare a simple ETF portfolio, see what each approach would "
-        "hold now, and turn one proposal into a rebalance checklist."
+        "Build and compare a simple ETF portfolio, test a TimesFM-3 forecast filter, "
+        "see what each approach would hold, and turn one current proposal into a "
+        "rebalance checklist."
     )
     guide = st.columns(3)
     guide[0].info("**1 · Choose ETFs**\n\nSelect one to eight investments to study.")
-    guide[1].info("**2 · Compare approaches**\n\nReview the proposed mix and historical results.")
+    guide[1].info(
+        "**2 · Compare approaches**\n\nSee whether TimesFM changed results or merely added turnover."
+    )
     guide[2].info(
         "**3 · Rebalance (optional)**\n\nEnter current weights totaling 100%, then send a proposal to Portfolio Lab."
     )
@@ -1202,11 +1450,22 @@ def render_workbench(
         return None
 
     freshness = bundle.freshness(as_of=_test_as_of())
-    status_columns = st.columns(4)
-    status_columns[0].metric("Bundle status", freshness["status"].title())
-    status_columns[1].metric("ETF prices through", bundle.manifest["price_data_as_of"])
-    status_columns[2].metric("Cash rates through", bundle.manifest["cash_rate_as_of"])
-    status_columns[3].metric("Latest complete month", bundle.manifest["last_complete_month"])
+    st.caption(
+        f"Validated local data · ETF prices through {bundle.manifest['price_data_as_of']} "
+        f"· overnight cash rates through {bundle.manifest['cash_rate_as_of']}"
+    )
+    with st.expander("Data status and methodology dates", expanded=False):
+        status_columns = st.columns(4)
+        status_columns[0].metric("Bundle status", freshness["status"].title())
+        status_columns[1].metric(
+            "ETF prices through", bundle.manifest["price_data_as_of"]
+        )
+        status_columns[2].metric(
+            "Cash rates through", bundle.manifest["cash_rate_as_of"]
+        )
+        status_columns[3].metric(
+            "Latest complete month", bundle.manifest["last_complete_month"]
+        )
     if freshness["status"] == "warning":
         st.warning(f"Workbench data warning: {freshness['reason']}.")
     elif freshness["status"] == "disabled":
@@ -1233,23 +1492,6 @@ def render_workbench(
         st.info(
             "Forecast research is temporarily unavailable, so the standard "
             "workbench is still running without it."
-        )
-    elif forecast_freshness["latest_target_status"] == "disabled":
-        st.warning(
-            "TimesFM historical research is available, but its newest forecast "
-            "cannot be used as a current proposal: "
-            f"{forecast_freshness['reason']}. You can still compare its completed "
-            "history; target transfer stays disabled."
-        )
-    elif forecast_freshness["latest_target_status"] == "scheduled":
-        st.info(
-            "TimesFM historical research is available. Its newest forecast is "
-            "scheduled, but its intended execution close has not occurred, so it "
-            "is not yet transferable."
-        )
-    else:
-        st.success(
-            "TimesFM forecast research is available and its latest target is current."
         )
 
     labels = {
@@ -1325,16 +1567,23 @@ def render_workbench(
         st.session_state.pop("portfolio_lab_transfer", None)
         return None
 
-    if standard_freshness["latest_target_status"] == "disabled":
-        st.warning(
-            f"{VOL_BALANCED_LABEL} and {VOL_TREND_LABEL} histories remain available, "
-            "but their newest targets are historical-only: "
-            f"{standard_freshness['reason']}. They cannot be sent to Portfolio Lab."
-        )
-    elif standard_freshness["latest_target_status"] == "scheduled":
+    unavailable_tactical = []
+    if standard_freshness["latest_target_status"] != "current":
+        unavailable_tactical.append("volatility/trend")
+    if (
+        forecast_freshness is not None
+        and forecast_freshness["latest_target_status"] != "current"
+    ):
+        unavailable_tactical.append("TimesFM")
+    if unavailable_tactical:
         st.info(
-            f"The newest {VOL_BALANCED_LABEL} and {VOL_TREND_LABEL} targets await "
-            "their intended execution close and are not yet transferable."
+            "Historical analysis is ready. The latest "
+            + " and ".join(unavailable_tactical)
+            + " tactical target"
+            + ("s are" if len(unavailable_tactical) > 1 else " is")
+            + " research-only because this artifact snapshot missed or has not yet "
+            "reached its intended rebalance close. You can inspect and download the "
+            "target, but only a current or constant target can be sent to Portfolio Lab."
         )
 
     options = available_comparisons(
@@ -1347,7 +1596,11 @@ def render_workbench(
         st.session_state.get("wb_comparisons_by_selection", {})
     )
     stored = [
-        item for item in saved_by_selection.get(selection_key, options) if item in options
+        item
+        for item in saved_by_selection.get(
+            selection_key, default_comparisons(selected, options)
+        )
+        if item in options
     ]
     if not stored:
         stored = list(options)
@@ -1498,20 +1751,161 @@ def render_workbench(
         forecast_etfs = latest_forecast.loc[
             latest_forecast["asset"] != CASH_LABEL
         ].copy()
+        skill = forecast_skill_snapshot(forecast_bundle.metrics)
         title_status = (
             "current"
             if forecast_freshness["latest_target_status"] == "current"
             else "historical research only"
         )
+        st.divider()
+        st.markdown("## TimesFM-3 research lab")
+        st.write(
+            "See the model's latest ETF-versus-cash decisions, test whether using all "
+            "14 ETF histories helped, and audit past forecasts against what happened."
+        )
+        scorecards = st.columns(4)
+        scorecards[0].metric(
+            "Forecasts checked",
+            f"{skill['observations']:,}",
+        )
+        scorecards[0].caption("14 ETFs · completed months")
+        scorecards[1].metric(
+            "Up/down accuracy",
+            f"{skill['directional_accuracy']:.1%}",
+        )
+        scorecards[1].caption(
+            f"{skill['directional_lift_vs_univariate'] * 100:+.1f} pts vs one-series model"
+        )
+        scorecards[2].metric(
+            "Typical return error",
+            f"{skill['return_mae']:.2%}",
+        )
+        scorecards[2].caption(
+            f"{skill['mae_improvement_vs_univariate']:.1%} lower than one-series model"
+        )
+        scorecards[3].metric(
+            "80% price-band coverage",
+            f"{skill['interval_80_coverage']:.1%}",
+        )
+        scorecards[3].caption("ideal calibration would be near 80%")
+        st.caption(
+            "Cross-series result: using all ETF histories lowered return error by "
+            f"{skill['mae_improvement_vs_univariate']:.1%} and changed direction "
+            f"accuracy by {skill['directional_lift_vs_univariate'] * 100:+.1f} "
+            "percentage points versus forecasting each ETF alone—a modest, not "
+            "decisive, gain."
+        )
+        if forecast_selected:
+            portfolio_comparison = forecast_portfolio_comparison(study)
+            st.info(forecast_portfolio_verdict(portfolio_comparison))
+            st.caption(
+                "The portfolio verdict compares Forecast with Buy & Hold for one ETF, "
+                "or Equal Weight for several ETFs, over the exact history selected above. "
+                f"Against the simple last-value forecast, TimesFM's return MAE was "
+                f"{skill['mae_improvement_vs_last_value']:.1%} lower."
+            )
+        else:
+            st.info(
+                "Add Forecast filter under Comparison series to calculate an "
+                "apples-to-apples portfolio verdict for the selected history."
+            )
+
+        st.markdown(f"### Latest recorded forecast · {title_status}")
+        st.write(
+            "An ETF qualifies only when TimesFM's median one-month return forecast "
+            "is above the known overnight-cash hurdle. Forecast size does not set "
+            "the weight; qualifying ETFs are weighted by trailing volatility."
+        )
+        st.caption(
+            f"Signal {forecast_result.latest_signal_date.date()} · intended execution "
+            f"{forecast_result.latest_execution_date.date()} · holding period ends "
+            f"{forecast_result.latest_period_end_date.date()}"
+        )
+        forecast_display = forecast_etfs[
+            [
+                "asset",
+                "role",
+                "median_forecast_return",
+                "cash_hurdle",
+                "forecast_status",
+                "final_weight",
+            ]
+        ].rename(
+            columns={
+                "asset": "ETF",
+                "role": "Role",
+                "median_forecast_return": "Median one-month forecast",
+                "cash_hurdle": "Cash hurdle",
+                "forecast_status": "Decision",
+                "final_weight": "Research target",
+            }
+        )
+        forecast_display["Decision"] = forecast_display["Decision"].replace(
+            {"Eligible": "ETF eligible", "Held in cash": "Use cash instead"}
+        )
+        st.dataframe(
+            forecast_display.style.format(
+                {
+                    "Median one-month forecast": "{:+.2%}",
+                    "Cash hurdle": "{:.2%}",
+                    "Research target": "{:.2%}",
+                },
+                na_rep="—",
+            ),
+            hide_index=True,
+            width="stretch",
+        )
+
+        with st.expander("Audit past TimesFM forecasts", expanded=False):
+            replay_key = "wb_forecast_replay_ticker"
+            if st.session_state.get(replay_key) not in (None, *selected):
+                st.session_state.pop(replay_key, None)
+            replay_ticker = st.selectbox(
+                "ETF to inspect",
+                options=list(selected),
+                key=replay_key,
+                help="The chart uses only completed forecasts with known outcomes.",
+            )
+            try:
+                replay = forecast_replay_frame(
+                    forecast_bundle.signals,
+                    replay_ticker,
+                    start=start,
+                    end=end,
+                )
+            except ValueError as exc:
+                st.info(str(exc))
+            else:
+                replay_stats = forecast_replay_summary(replay)
+                replay_cards = st.columns(3)
+                replay_cards[0].metric(
+                    "Cash-vs-ETF calls correct",
+                    f"{replay_stats['cash_gate_accuracy']:.1%}",
+                )
+                replay_cards[0].caption(
+                    f"{replay_stats['observations']} completed months"
+                )
+                replay_cards[1].metric(
+                    "Typical return error",
+                    f"{replay_stats['return_mae']:.2%}",
+                )
+                replay_cards[1].caption("mean absolute one-month error")
+                replay_cards[2].metric(
+                    "80% price-band coverage",
+                    f"{replay_stats['interval_80_coverage']:.1%}",
+                )
+                replay_cards[2].caption("share of outcomes inside q10–q90")
+                _forecast_replay_chart(replay, replay_ticker)
+                st.caption(
+                    "A cash-vs-ETF call is correct when the model correctly identifies "
+                    "whether the ETF's realized holding return beats the cash hurdle. "
+                    "Hover the chart to inspect individual months."
+                )
+
         with st.expander(
-            f"Latest TimesFM forecast details — {title_status}",
+            "Forecast uncertainty, provenance, and allocation history",
             expanded=False,
         ):
-            st.write(
-                "TimesFM decides only whether each ETF's median forecast clears the "
-                "cash hurdle. Eligible ETFs are then weighted by trailing volatility; "
-                "a larger forecast does not earn a larger weight."
-            )
             st.caption(
                 "The multivariate model always receives the histories of all 14 curated "
                 "ETFs together, even when you select only one ETF for allocation."
@@ -1526,45 +1920,6 @@ def render_workbench(
                 f"model ran {forecast_freshness['latest_model_generated_at_utc']} · "
                 f"execution cutoff {forecast_freshness['latest_execution_cutoff_utc']} · "
                 "the bundle refresh timestamp is separate from model generation."
-            )
-            forecast_display = forecast_etfs[
-                [
-                    "asset",
-                    "role",
-                    "median_forecast_return",
-                    "cash_hurdle",
-                    "forecast_status",
-                    "trailing_volatility",
-                    "raw_weight",
-                    "final_weight",
-                    "reason",
-                ]
-            ].rename(
-                columns={
-                    "asset": "ETF",
-                    "role": "Role",
-                    "median_forecast_return": "Median forecast",
-                    "cash_hurdle": "Cash hurdle",
-                    "forecast_status": "Eligibility",
-                    "trailing_volatility": "Trailing volatility",
-                    "raw_weight": "Raw risk-balanced weight",
-                    "final_weight": "Research target",
-                    "reason": "Why this weight?",
-                }
-            )
-            st.dataframe(
-                forecast_display.style.format(
-                    {
-                        "Median forecast": "{:+.2%}",
-                        "Cash hurdle": "{:.2%}",
-                        "Trailing volatility": "{:.2%}",
-                        "Raw risk-balanced weight": "{:.2%}",
-                        "Research target": "{:.2%}",
-                    },
-                    na_rep="—",
-                ),
-                hide_index=True,
-                width="stretch",
             )
             price_display = forecast_etfs[
                 [
@@ -1644,16 +1999,22 @@ def render_workbench(
         item
         for item in options
         if item not in (CURRENT_MIX_LABEL, SPY_REFERENCE_LABEL)
-        and not (
-            item == VOL_FORECAST_LABEL
-            and forecast_freshness["latest_target_status"] != "current"
-        )
-        and not (
-            item in (VOL_BALANCED_LABEL, VOL_TREND_LABEL)
-            and standard_freshness["latest_target_status"] != "current"
-        )
     ]
-    stored_target = st.session_state.get("wb_authoritative_target", VOL_TREND_LABEL)
+    if (
+        VOL_FORECAST_LABEL in target_options
+        and forecast_freshness["latest_target_status"] == "current"
+    ):
+        default_target = VOL_FORECAST_LABEL
+    elif (
+        VOL_TREND_LABEL in target_options
+        and standard_freshness["latest_target_status"] == "current"
+    ):
+        default_target = VOL_TREND_LABEL
+    elif EQUAL_WEIGHT_LABEL in target_options:
+        default_target = EQUAL_WEIGHT_LABEL
+    else:
+        default_target = target_options[0]
+    stored_target = st.session_state.get("wb_authoritative_target", default_target)
     if stored_target not in target_options:
         stored_target = (
             EQUAL_WEIGHT_LABEL
@@ -1676,13 +2037,18 @@ def render_workbench(
     )
     target = study.latest_targets[authoritative]
     provenance = target_provenance(bundle, study, authoritative)
-    st.markdown("### Latest proposed portfolio")
+    target_transferable = provenance["execution_status"] in {
+        "current",
+        "constant_target_effective_for_analytical_ticket",
+    }
+    st.markdown("### Latest target snapshot")
     st.write(proposed_target_summary(target))
     st.caption(target_provenance_summary(provenance))
-    if provenance["execution_status"] == "pending_next_trading_close":
+    if not target_transferable:
         st.warning(
-            "Proposed, not executed: this target uses the latest completed signal "
-            "and is waiting for the next monthly rebalance trading close."
+            "This target is available for research and download, but its timing status "
+            "does not permit a Portfolio Lab transfer. Choose a current or constant "
+            "target to create a rebalance ticket."
         )
     if authoritative in (VOL_BALANCED_LABEL, VOL_TREND_LABEL):
         st.caption(study.allocation_results[authoritative].policy.cap_explanation)
@@ -1731,7 +2097,7 @@ def render_workbench(
         width="stretch",
     )
 
-    if current_valid:
+    if current_valid and target_transferable:
         ticket = build_rebalance_ticket(
             current_weights,
             target,
@@ -1788,9 +2154,18 @@ def render_workbench(
             "Send proposed target to Portfolio Lab",
             disabled=True,
             key="wb_send_to_portfolio_lab_disabled",
-            help="Enter current weights that total exactly 100% before transferring.",
+            help=(
+                "Choose a current or constant target before transferring."
+                if current_valid
+                else "Enter current weights that total exactly 100% before transferring."
+            ),
         )
-        if current_error:
+        if current_valid:
+            st.info(
+                "Next step: choose a current or constant target if you want a ticket. "
+                "This historical-only target remains available for analysis and download."
+            )
+        elif current_error:
             st.info("Next step: adjust the current-weight total to exactly 100%.")
         else:
             st.info(

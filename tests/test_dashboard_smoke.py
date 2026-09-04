@@ -184,21 +184,38 @@ def test_late_forecast_history_is_visible_but_target_is_not_transferable(monkeyp
     comparison = next(
         widget for widget in app.multiselect if widget.label == "Comparison series"
     )
+    app.checkbox(key="wb_current_enabled").set_value(True).run()
+    comparison = next(
+        widget for widget in app.multiselect if widget.label == "Comparison series"
+    )
     target = app.selectbox(key="wb_authoritative_target")
     assert comparison_selector_label(VOL_FORECAST_LABEL) in comparison.options
     assert VOL_FORECAST_LABEL in comparison.value
-    assert VOL_FORECAST_LABEL not in target.options
-    assert VOL_BALANCED_LABEL not in target.options
-    assert VOL_TREND_LABEL not in target.options
+    assert VOL_FORECAST_LABEL in target.options
+    assert VOL_BALANCED_LABEL in target.options
+    assert VOL_TREND_LABEL in target.options
+    target.set_value(VOL_FORECAST_LABEL).run()
+    assert app.button(key="wb_send_to_portfolio_lab_disabled").disabled
+    assert "portfolio_lab_transfer" not in app.session_state
     assert any(
-        "historical research is available" in warning.value
-        and "target transfer stays disabled" in warning.value
-        for warning in app.warning
+        "Historical analysis is ready" in item.value
+        and "TimesFM" in item.value
+        for item in app.info
     )
     assert any(
-        "historical research only" in expander.label.lower()
+        "forecast uncertainty" in expander.label.lower()
         for expander in app.expander
     )
+    assert any(
+        "TimesFM-3 research lab" in item.value for item in app.markdown
+    )
+    metric_labels = {item.label for item in app.metric}
+    assert {
+        "Forecasts checked",
+        "Up/down accuracy",
+        "Typical return error",
+        "80% price-band coverage",
+    }.issubset(metric_labels)
     forecast_checks = next(
         item.value
         for item in app.dataframe
@@ -377,7 +394,6 @@ def test_comparison_defaults_follow_selected_etf_tuple(monkeypatch):
     app.multiselect(key="wb_selected_etfs").set_value(["SPY"]).run()
     one = next(widget for widget in app.multiselect if widget.label == "Comparison series")
     assert one.value == [
-        "Volatility Balanced + Trend",
         "Volatility Balanced + Forecast",
         "Buy & Hold",
         "Cash — U.S. overnight-rate proxy",
