@@ -14,6 +14,7 @@ from dashboard.workbench import (
     EQUAL_WEIGHT_LABEL,
     VOL_BALANCED_LABEL,
     VOL_TREND_LABEL,
+    SPY_REFERENCE_LABEL,
     _format_metrics,
     allocation_chart_data,
     allocation_history_download,
@@ -26,15 +27,18 @@ from dashboard.workbench import (
     holding_period_returns,
     latest_target_download,
     load_cached_bundle,
+    load_cached_timesfm_bundle,
     proposed_target_summary,
     target_provenance,
     target_provenance_summary,
     ticket_action_summary,
     ticket_dollar_summary,
+    timesfm_bundle_fingerprint,
     why_this_weight,
 )
 from data.cash import CASH_LABEL
 from data.workbench import DEFAULT_BUNDLE_PATH, load_workbench_bundle
+from data.timesfm import DEFAULT_BUNDLE_PATH as DEFAULT_TIMESFM_BUNDLE_PATH
 from portfolio.rebalance import build_rebalance_ticket
 
 
@@ -72,6 +76,42 @@ def test_content_cache_detects_same_size_same_mtime_bundle_corruption(tmp_path):
         clear_workbench_caches()
 
 
+def test_timesfm_content_cache_invalidates_same_size_same_mtime_corruption(tmp_path):
+    copied = tmp_path / "timesfm"
+    shutil.copytree(DEFAULT_TIMESFM_BUNDLE_PATH, copied)
+    signals_path = copied / "forecast_signals.csv"
+    clear_workbench_caches()
+    try:
+        load_cached_timesfm_bundle(copied, DEFAULT_BUNDLE_PATH)
+        initial_fingerprint = timesfm_bundle_fingerprint(copied)
+        initial_stat = signals_path.stat()
+        contents = bytearray(signals_path.read_bytes())
+        position = contents.find(b"timesfm3_multivariate")
+        assert position >= 0
+        contents[position + 9] = ord("x")
+        signals_path.write_bytes(contents)
+        os.utime(
+            signals_path,
+            ns=(initial_stat.st_atime_ns, initial_stat.st_mtime_ns),
+        )
+
+        assert signals_path.stat().st_size == initial_stat.st_size
+        assert signals_path.stat().st_mtime_ns == initial_stat.st_mtime_ns
+        assert timesfm_bundle_fingerprint(copied) != initial_fingerprint
+        with pytest.raises(ValueError, match="checksum mismatch"):
+            load_cached_timesfm_bundle(copied, DEFAULT_BUNDLE_PATH)
+    finally:
+        clear_workbench_caches()
+
+
+def test_committed_timesfm_bundle_is_historical_only_after_late_generation():
+    bundle = load_cached_timesfm_bundle()
+    freshness = bundle.freshness(as_of="2026-09-05")
+    assert freshness["historical_available"] is True
+    assert freshness["latest_target_status"] == "disabled"
+    assert "after its execution cutoff" in freshness["reason"]
+
+
 def test_freshness_policy_allows_one_month_warning_and_disables_two_or_future(bundle):
     assert bundle.freshness(as_of="2026-09-15")["status"] == "current"
     assert bundle.freshness(as_of="2026-10-15")["status"] == "warning"
@@ -105,7 +145,10 @@ def test_supported_selected_sets_build_common_engine_results(bundle, selected):
     assert (BUY_HOLD_LABEL in study.backtests) == (len(selected) == 1)
     for label, result in study.backtests.items():
         assert not result.periods.empty, label
-        assert result.target_weights.columns.tolist() == [*selected, CASH_ASSET]
+        if label == SPY_REFERENCE_LABEL and "SPY" not in selected:
+            assert result.target_weights.columns.tolist() == ["SPY", CASH_ASSET]
+        else:
+            assert result.target_weights.columns.tolist() == [*selected, CASH_ASSET]
         assert result.target_weights.sum(axis=1).to_numpy() == pytest.approx(1.0)
         assert result.periods["net_equity"].iloc[-1] > 0
 
@@ -211,6 +254,12 @@ def test_explanation_has_required_semantics_and_cash_label(bundle):
         "filtered_raw_weight",
         "final_weight",
         "change_vs_uncapped_inverse_vol",
+        "median_forecast_return",
+        "cash_hurdle",
+        "forecast_status",
+        "q10_period_end_price",
+        "q50_period_end_price",
+        "q90_period_end_price",
         "reason",
     ]
     etfs = explanation[explanation["asset"] != CASH_LABEL]

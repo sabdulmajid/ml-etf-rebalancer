@@ -8,6 +8,7 @@ its sole data source.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import os
 from pathlib import Path
 
@@ -31,6 +32,11 @@ from data.workbench import (
     file_sha256,
     load_workbench_bundle,
 )
+from data.timesfm import (
+    DEFAULT_BUNDLE_PATH as DEFAULT_TIMESFM_BUNDLE_PATH,
+    PUBLIC_FILENAMES as TIMESFM_PUBLIC_FILENAMES,
+    load_timesfm_bundle,
+)
 from portfolio.rebalance import (
     RebalanceTicket,
     build_rebalance_ticket,
@@ -45,14 +51,23 @@ from strategies.allocation import (
     position_cap,
     generate_allocation_targets,
 )
+from strategies.forecast import (
+    ForecastAllocationResult,
+    generate_forecast_allocation_targets,
+)
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 VOL_BALANCED_LABEL = "Volatility Balanced"
 VOL_TREND_LABEL = "Volatility Balanced + Trend"
+VOL_FORECAST_LABEL = "Volatility Balanced + Forecast"
 EQUAL_WEIGHT_LABEL = "Equal Weight"
 CASH_LABEL_SHORT = CASH_LABEL
 BUY_HOLD_LABEL = "Buy & Hold"
 CURRENT_MIX_LABEL = "Current Mix — monthly rebalanced"
+SPY_REFERENCE_LABEL = "SPY — U.S. equity reference"
 DEFAULT_SELECTION = ("SPY", "IEF", "GLD")
 
 ALLOCATION_LABELS = {
@@ -68,6 +83,9 @@ class WorkbenchStudy:
     allocation_results: dict[str, AllocationResult]
     backtests: dict[str, BacktestResult]
     latest_targets: dict[str, pd.Series]
+    forecast_result: ForecastAllocationResult | None
+    forecast_manifest: dict | None
+    forecast_freshness: dict | None
     current_weights: pd.Series | None
     start: pd.Timestamp | None
     end: pd.Timestamp | None
@@ -105,6 +123,45 @@ def load_cached_bundle(path=DEFAULT_BUNDLE_PATH):
     return _load_cached_bundle(str(path), bundle_fingerprint(path))
 
 
+def timesfm_bundle_fingerprint(path=DEFAULT_TIMESFM_BUNDLE_PATH):
+    """Return a content cache key for the complete local TimesFM bundle."""
+    root = Path(path).resolve()
+    return tuple(
+        (name, file_sha256(root / name)) for name in TIMESFM_PUBLIC_FILENAMES
+    )
+
+
+@st.cache_data(show_spinner=False)
+def _load_cached_timesfm_bundle(
+    path_string,
+    fingerprint,
+    workbench_path_string,
+    workbench_fingerprint,
+):
+    if tuple(name for name, _digest in fingerprint) != TIMESFM_PUBLIC_FILENAMES:
+        raise ValueError("TimesFM cache fingerprint must cover the three public files")
+    if tuple(name for name, _digest in workbench_fingerprint) != PUBLIC_FILENAMES:
+        raise ValueError("workbench cache fingerprint must cover the four public files")
+    return load_timesfm_bundle(
+        Path(path_string),
+        workbench_path=Path(workbench_path_string),
+    )
+
+
+def load_cached_timesfm_bundle(
+    path=DEFAULT_TIMESFM_BUNDLE_PATH,
+    workbench_path=DEFAULT_BUNDLE_PATH,
+):
+    path = Path(path).resolve()
+    workbench_path = Path(workbench_path).resolve()
+    return _load_cached_timesfm_bundle(
+        str(path),
+        timesfm_bundle_fingerprint(path),
+        str(workbench_path),
+        bundle_fingerprint(workbench_path),
+    )
+
+
 def generate_workbench_allocations(bundle, selected_etfs):
     """Generate full-artifact targets once for a validated selected ETF set."""
     selected = tuple(selected_etfs)
@@ -126,26 +183,61 @@ def _cached_allocation_results(path_string, fingerprint, selected_etfs):
     return generate_workbench_allocations(bundle, selected_etfs)
 
 
+@st.cache_data(show_spinner=False)
+def _cached_forecast_allocation_result(
+    workbench_path_string,
+    workbench_fingerprint,
+    timesfm_path_string,
+    timesfm_fingerprint,
+    selected_etfs,
+):
+    bundle = _load_cached_bundle(workbench_path_string, workbench_fingerprint)
+    forecast_bundle = _load_cached_timesfm_bundle(
+        timesfm_path_string,
+        timesfm_fingerprint,
+        workbench_path_string,
+        workbench_fingerprint,
+    )
+    return generate_forecast_allocation_targets(
+        bundle.adjusted_close.loc[:, selected_etfs],
+        selected_etfs,
+        forecast_bundle.signals,
+        as_of=bundle.signal_as_of,
+    )
+
+
 def clear_workbench_caches():
     """Clear only workbench bundle/allocation caches for deterministic tests."""
     _load_cached_bundle.clear()
     _cached_allocation_results.clear()
+    _load_cached_timesfm_bundle.clear()
+    _cached_forecast_allocation_result.clear()
 
 
-def available_comparisons(selected_etfs, current_weights_valid=False):
+def available_comparisons(
+    selected_etfs,
+    current_weights_valid=False,
+    forecast_available=False,
+):
     """Return only comparisons compatible with the selected set and inputs."""
     selected = tuple(selected_etfs)
     if len(selected) == 1:
         # Volatility Balanced and Equal Weight are necessarily 100% in the lone
         # ETF, exactly duplicating Buy & Hold. Represent that path once.
-        options = [VOL_TREND_LABEL, BUY_HOLD_LABEL, CASH_LABEL_SHORT]
+        options = [VOL_TREND_LABEL]
+        if forecast_available:
+            options.append(VOL_FORECAST_LABEL)
+        options.extend([BUY_HOLD_LABEL, CASH_LABEL_SHORT])
     else:
         options = [
             VOL_BALANCED_LABEL,
             VOL_TREND_LABEL,
-            EQUAL_WEIGHT_LABEL,
-            CASH_LABEL_SHORT,
         ]
+        if forecast_available:
+            options.append(VOL_FORECAST_LABEL)
+        options.extend([EQUAL_WEIGHT_LABEL, CASH_LABEL_SHORT, SPY_REFERENCE_LABEL])
+    if len(selected) == 1 and selected[0] != "SPY":
+        options.append(SPY_REFERENCE_LABEL)
     if current_weights_valid:
         options.append(CURRENT_MIX_LABEL)
     return options
@@ -191,6 +283,9 @@ def build_workbench_study(
     start=None,
     end=None,
     allocation_results=None,
+    forecast_result=None,
+    forecast_manifest=None,
+    forecast_freshness=None,
 ):
     """Calculate every compatible series through the common PR1 engine."""
     if not isinstance(bundle, WorkbenchBundle):
@@ -214,6 +309,24 @@ def build_workbench_study(
         label: result.schedule.select(start=cash_history_start)
         for label, result in allocation_results.items()
     }
+    if forecast_result is not None:
+        if (
+            not isinstance(forecast_result, ForecastAllocationResult)
+            or forecast_result.selected_etfs != selected
+        ):
+            raise ValueError("forecast allocation does not match the selected ETFs")
+        forecast_schedule = forecast_result.schedule.select(start=cash_history_start)
+        schedules = {
+            label: schedule.select(
+                start=forecast_schedule.execution_dates[0],
+                end=forecast_schedule.period_end_dates.iloc[-1],
+            )
+            for label, schedule in schedules.items()
+        }
+        expected_dates = forecast_schedule.execution_dates
+        if any(not schedule.execution_dates.equals(expected_dates) for schedule in schedules.values()):
+            raise ValueError("forecast and workbench histories do not share exact periods")
+        schedules[VOL_FORECAST_LABEL] = forecast_schedule
     base_schedule = schedules[VOL_BALANCED_LABEL]
     asset_returns, cash_returns = holding_period_returns(
         bundle, base_schedule, selected
@@ -223,6 +336,8 @@ def build_workbench_study(
         label: result.latest_target.copy()
         for label, result in allocation_results.items()
     }
+    if forecast_result is not None:
+        latest_targets[VOL_FORECAST_LABEL] = forecast_result.latest_target.copy()
 
     cash_target = pd.Series(0.0, index=[*selected, CASH_ASSET], dtype=float)
     cash_target.loc[CASH_ASSET] = 1.0
@@ -250,6 +365,17 @@ def build_workbench_study(
         )
         latest_targets[CURRENT_MIX_LABEL] = validated_current.copy()
 
+    if "SPY" in selected and not (len(selected) == 1 and selected[0] == "SPY"):
+        spy_target = pd.Series(
+            0.0,
+            index=[*selected, CASH_ASSET],
+            dtype=float,
+        )
+        spy_target.loc["SPY"] = 1.0
+        schedules[SPY_REFERENCE_LABEL] = _constant_schedule(
+            base_schedule, selected, spy_target
+        )
+
     backtests = {}
     for label, schedule in schedules.items():
         # All schedules share the selected-set timing contract. Supplying the
@@ -262,11 +388,34 @@ def build_workbench_study(
             start=start,
             end=end,
         )
+    if "SPY" not in selected:
+        external_target = pd.Series(
+            {"SPY": 1.0, CASH_ASSET: 0.0}, dtype=float
+        )
+        external_schedule = _constant_schedule(
+            base_schedule,
+            ("SPY",),
+            external_target,
+        )
+        spy_returns, spy_cash = holding_period_returns(
+            bundle, external_schedule, ("SPY",)
+        )
+        backtests[SPY_REFERENCE_LABEL] = run_backtest(
+            external_schedule,
+            spy_returns,
+            spy_cash,
+            transaction_cost_bps=transaction_cost_bps,
+            start=start,
+            end=end,
+        )
     return WorkbenchStudy(
         selected_etfs=selected,
         allocation_results=allocation_results,
         backtests=backtests,
         latest_targets=latest_targets,
+        forecast_result=forecast_result,
+        forecast_manifest=forecast_manifest,
+        forecast_freshness=forecast_freshness,
         current_weights=validated_current,
         start=None if start is None else pd.Timestamp(start),
         end=None if end is None else pd.Timestamp(end),
@@ -331,6 +480,15 @@ def target_provenance(bundle, study, label):
         signal_as_of = "not_applicable_no_tactical_signal"
         execution_status = "constant_target_effective_for_analytical_ticket"
         policy_version = "equal-weight-monthly-v1"
+    elif label == VOL_FORECAST_LABEL:
+        if study.forecast_result is None or study.forecast_manifest is None:
+            raise ValueError("forecast target provenance is unavailable")
+        allocation = study.forecast_result
+        signal_as_of = str(allocation.latest_signal_date.date())
+        execution_status = (
+            study.forecast_freshness or {}
+        ).get("latest_target_status", "disabled")
+        policy_version = allocation.forecast_policy_version
     else:
         allocation = study.allocation_results[label]
         signal_as_of = str(pd.Timestamp(allocation.latest_signal_date).date())
@@ -340,10 +498,14 @@ def target_provenance(bundle, study, label):
             else str(pd.Timestamp(allocation.latest_execution_date).date())
         )
         policy_version = allocation.policy.version
-    return {
+    result = {
         "signal_as_of": signal_as_of,
         "execution_status": execution_status,
-        "artifact_generated_at_utc": bundle.manifest["generated_at_utc"],
+        "artifact_generated_at_utc": (
+            study.forecast_manifest["bundle_refresh"]["generated_at_utc"]
+            if label == VOL_FORECAST_LABEL
+            else bundle.manifest["generated_at_utc"]
+        ),
         "price_data_as_of": bundle.manifest["price_data_as_of"],
         "policy_version": policy_version,
         "displayed_history_through": str(
@@ -352,6 +514,22 @@ def target_provenance(bundle, study, label):
             ).date()
         ),
     }
+    if label == VOL_FORECAST_LABEL:
+        result.update(
+            {
+                "model_checkpoint": study.forecast_manifest["model_policy"][
+                    "checkpoint_id"
+                ],
+                "model_checkpoint_revision": study.forecast_manifest[
+                    "model_policy"
+                ]["checkpoint_revision"],
+                "evaluation_classification": study.forecast_manifest[
+                    "evaluation_classification"
+                ],
+                "pretraining_overlap": study.forecast_manifest["pretraining_overlap"],
+            }
+        )
+    return result
 
 
 def target_provenance_summary(provenance):
@@ -363,7 +541,13 @@ def target_provenance_summary(provenance):
     else:
         signal_text = f"Signal as of {provenance['signal_as_of']}"
 
-    if provenance["execution_status"] == "pending_next_trading_close":
+    if provenance["execution_status"] == "current":
+        execution_text = "Current forecast target"
+    elif provenance["execution_status"] == "scheduled":
+        execution_text = "Forecast target scheduled; execution date has not arrived"
+    elif provenance["execution_status"] == "disabled":
+        execution_text = "Historical research only; latest target is not transferable"
+    elif provenance["execution_status"] == "pending_next_trading_close":
         execution_text = "Awaiting the next rebalance trading close"
     elif (
         provenance["execution_status"]
@@ -403,7 +587,59 @@ def why_this_weight(bundle, study, label):
     """Return the latest strategy explanation, including explicit cash."""
     registry = bundle.instruments.set_index("ticker")
     target = study.latest_targets[label]
-    if label in study.allocation_results:
+    forecast_fields = {
+        "median_forecast_return": np.nan,
+        "cash_hurdle": np.nan,
+        "forecast_status": "Not used",
+        "q10_period_end_price": np.nan,
+        "q50_period_end_price": np.nan,
+        "q90_period_end_price": np.nan,
+    }
+    if label == VOL_FORECAST_LABEL:
+        if study.forecast_result is None:
+            raise ValueError("forecast explanation is unavailable")
+        diagnostics = (
+            study.forecast_result.latest_diagnostics.reset_index().set_index("ticker")
+        )
+        rows = []
+        for ticker in study.selected_etfs:
+            row = diagnostics.loc[ticker]
+            rows.append(
+                {
+                    "asset": ticker,
+                    "role": registry.loc[ticker, "role"],
+                    "trend": "Not used",
+                    "trailing_volatility": row["trailing_volatility"],
+                    "raw_weight": row["raw_risk_balanced_weight"],
+                    "filtered_raw_weight": np.nan,
+                    "final_weight": row["final_target_weight"],
+                    "change_vs_uncapped_inverse_vol": (
+                        row["final_target_weight"]
+                        - row["raw_risk_balanced_weight"]
+                    ),
+                    "median_forecast_return": row["median_forecast_return"],
+                    "cash_hurdle": row["cash_hurdle"],
+                    "forecast_status": row["forecast_status"],
+                    "q10_period_end_price": row["q10_period_end_price"],
+                    "q50_period_end_price": row["q50_period_end_price"],
+                    "q90_period_end_price": row["q90_period_end_price"],
+                    "reason": row["reason"],
+                }
+            )
+        cash_weight = float(target.loc[CASH_ASSET])
+        passed = sum(row["forecast_status"] == "Pass" for row in rows)
+        if passed == 0:
+            reason = (
+                "No selected ETF's median forecast cleared cash, so the research "
+                "target is 100% analytical cash."
+            )
+        elif cash_weight > WEIGHT_TOLERANCE:
+            reason = (
+                "Cash holds the amount displaced by forecast failures and position caps."
+            )
+        else:
+            reason = "All capital is allocated among ETFs whose forecasts cleared cash."
+    elif label in study.allocation_results:
         allocation = study.allocation_results[label]
         diagnostics = allocation.latest_diagnostics.reset_index().set_index("ticker")
         rows = []
@@ -441,6 +677,7 @@ def why_this_weight(bundle, study, label):
                     "change_vs_uncapped_inverse_vol": (
                         np.nan if equal_weight else final - raw
                     ),
+                    **forecast_fields,
                     "reason": reason,
                 }
             )
@@ -479,6 +716,7 @@ def why_this_weight(bundle, study, label):
                 "filtered_raw_weight": np.nan,
                 "final_weight": target.loc[ticker],
                 "change_vs_uncapped_inverse_vol": np.nan,
+                **forecast_fields,
                 "reason": descriptions[label],
             }
             for ticker in study.selected_etfs
@@ -499,6 +737,7 @@ def why_this_weight(bundle, study, label):
             "filtered_raw_weight": np.nan,
             "final_weight": target.loc[CASH_ASSET],
             "change_vs_uncapped_inverse_vol": np.nan,
+            **forecast_fields,
             "reason": reason,
         }
     )
@@ -556,7 +795,7 @@ def _line_chart(study, labels, column, title, percent=False):
     st.plotly_chart(figure, width="stretch")
 
 
-def _allocation_chart(study, label):
+def _allocation_chart(study, label, *, key):
     allocations = allocation_chart_data(study, label)
     figure = go.Figure()
     for asset in allocations.columns:
@@ -580,7 +819,7 @@ def _allocation_chart(study, label):
         yaxis=dict(tickformat=".0%", range=[0, 1]),
         hovermode="x unified",
     )
-    st.plotly_chart(figure, width="stretch")
+    st.plotly_chart(figure, width="stretch", key=key)
 
 
 def _test_as_of():
@@ -736,7 +975,10 @@ def ticket_dollar_summary(ticket):
     )
 
 
-def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
+def render_workbench(
+    bundle_path=DEFAULT_BUNDLE_PATH,
+    timesfm_bundle_path=DEFAULT_TIMESFM_BUNDLE_PATH,
+):
     """Render the isolated first-tab workbench and populate Portfolio Lab state."""
     st.markdown("## ETF Allocation Workbench")
     st.write(
@@ -752,7 +994,8 @@ def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
     try:
         bundle = load_cached_bundle(bundle_path)
     except (FileNotFoundError, OSError, ValueError, KeyError) as exc:
-        st.error(f"Workbench unavailable: validated local data could not be loaded ({exc}).")
+        LOGGER.exception("Validated workbench data could not be loaded")
+        st.error("Workbench unavailable: validated local data could not be loaded.")
         st.info("The ML research tabs remain available.")
         st.session_state.pop("portfolio_lab_transfer", None)
         return None
@@ -770,6 +1013,42 @@ def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
         st.info("The ML research tabs remain available.")
         st.session_state.pop("portfolio_lab_transfer", None)
         return None
+
+    forecast_bundle = None
+    forecast_freshness = None
+    forecast_error = None
+    try:
+        with st.spinner("Loading local forecast research…"):
+            forecast_bundle = load_cached_timesfm_bundle(
+                timesfm_bundle_path,
+                workbench_path=bundle_path,
+            )
+        forecast_freshness = forecast_bundle.freshness(as_of=_test_as_of())
+    except (FileNotFoundError, OSError, ValueError, KeyError) as exc:
+        forecast_error = "unavailable"
+        LOGGER.warning("Local forecast research could not be loaded: %s", exc)
+
+    if forecast_error:
+        st.info(
+            "Forecast research is temporarily unavailable, so the standard "
+            "workbench is still running without it."
+        )
+    elif forecast_freshness["latest_target_status"] == "disabled":
+        st.warning(
+            "TimesFM historical research is available, but its newest forecast "
+            "cannot be used as a current proposal: "
+            f"{forecast_freshness['reason']}. You can still compare its completed "
+            "history; target transfer stays disabled."
+        )
+    elif forecast_freshness["latest_target_status"] == "scheduled":
+        st.info(
+            "TimesFM historical research is available. Its newest forecast is "
+            "scheduled for a future execution date, so it is not yet transferable."
+        )
+    else:
+        st.success(
+            "TimesFM forecast research is available and its latest target is current."
+        )
 
     labels = {
         row.ticker: f"{row.ticker} — {row.role}"
@@ -814,27 +1093,49 @@ def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
         allocation_results = _cached_allocation_results(
             str(path), bundle_fingerprint(path), tuple(selected)
         )
-        full_study = build_workbench_study(
-            bundle,
-            selected,
-            transaction_cost_bps=transaction_cost_bps,
-            current_weights=current_weights if current_valid else None,
-            allocation_results=allocation_results,
+        forecast_result = None
+        if forecast_bundle is not None:
+            try:
+                timesfm_path = Path(forecast_bundle.path).resolve()
+                forecast_result = _cached_forecast_allocation_result(
+                    str(path),
+                    bundle_fingerprint(path),
+                    str(timesfm_path),
+                    timesfm_bundle_fingerprint(timesfm_path),
+                    tuple(selected),
+                )
+            except (ValueError, ArithmeticError, KeyError) as exc:
+                forecast_error = "unavailable"
+                forecast_bundle = None
+                forecast_freshness = None
+                LOGGER.warning("Forecast target calculation failed: %s", exc)
+                st.info(
+                    "Forecast calculations are unavailable for this ETF set; "
+                    "the standard workbench remains available."
+                )
+        bounds_schedule = (
+            forecast_result.schedule
+            if forecast_result is not None
+            else allocation_results[VOL_BALANCED_LABEL].schedule.select(
+                start=pd.Timestamp(bundle.cash_index.index.min())
+            )
         )
+        earliest_execution = pd.Timestamp(bounds_schedule.execution_dates[0])
+        latest_period_end = pd.Timestamp(bounds_schedule.period_end_dates.iloc[-1])
     except (ValueError, ArithmeticError) as exc:
         st.error(f"This ETF set cannot be calculated: {exc}")
         st.session_state.pop("portfolio_lab_transfer", None)
         return None
 
     default_start = max(
-        full_study.earliest_execution,
-        full_study.latest_period_end - pd.DateOffset(years=10),
+        earliest_execution,
+        latest_period_end - pd.DateOffset(years=10),
     )
     date_range = controls[1].date_input(
         "Historical range",
-        value=(default_start.date(), full_study.latest_period_end.date()),
-        min_value=full_study.earliest_execution.date(),
-        max_value=full_study.latest_period_end.date(),
+        value=(default_start.date(), latest_period_end.date()),
+        min_value=earliest_execution.date(),
+        max_value=latest_period_end.date(),
         key="wb_date_range",
     )
     if not isinstance(date_range, (tuple, list)) or len(date_range) != 2:
@@ -847,7 +1148,11 @@ def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
         "Changing this range does not change the latest proposed target."
     )
 
-    options = available_comparisons(selected, current_valid)
+    options = available_comparisons(
+        selected,
+        current_valid,
+        forecast_available=forecast_result is not None,
+    )
     selection_key = "|".join(selected)
     saved_by_selection = dict(
         st.session_state.get("wb_comparisons_by_selection", {})
@@ -880,8 +1185,8 @@ def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
     if len(selected) == 1:
         st.info(
             f"With one ETF, compare three distinct choices: {BUY_HOLD_LABEL} keeps "
-            f"holding the ETF, {VOL_TREND_LABEL} switches between that ETF and cash, "
-            f"and {CASH_LABEL_SHORT} stays in analytical cash. Duplicate fully "
+            f"holding the ETF, the filtered approaches switch between that ETF and "
+            f"cash, and {CASH_LABEL_SHORT} stays in analytical cash. Duplicate fully "
             "invested lines are hidden."
         )
     if current_valid:
@@ -910,6 +1215,10 @@ def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
               same inverse-volatility weighting. ETFs that fail receive 0%; passing
               ETFs are reweighted subject to the position limit, and any unassigned
               amount goes to analytical cash.
+            - **{VOL_FORECAST_LABEL}:** uses the TimesFM-3 median forecast only as a
+              pass/fail gate. An ETF must forecast a higher holding-period return than
+              analytical cash; passing ETFs receive the same volatility-balanced weights.
+              Forecast magnitude never increases an ETF's weight.
             - **{EQUAL_WEIGHT_LABEL}:** gives every selected ETF the same weight and
               resets it monthly; it uses neither volatility nor trend.
             - **{CURRENT_MIX_LABEL}:** resets the exact weights you entered each month
@@ -920,9 +1229,15 @@ def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
               share. With {len(selected)} selected ETF{'s' if len(selected) != 1 else ''},
               equal weight is {equal_share:.1%} and the maximum is {cap:.1%}.
 
-            These rules look backward at recorded prices. They are not forecasts and
-            do not promise better future returns.
+            Volatility and trend use recorded prices. TimesFM is a model forecast,
+            shown only as a research comparison. None of these approaches promises
+            better future returns.
             """
+        )
+        st.caption(
+            "TimesFM results are historical replay research, not a live out-of-sample "
+            "claim. Whether the model's pretraining data overlaps these ETF periods is "
+            "unknown. This workbench is research, not investment advice."
         )
 
     try:
@@ -934,13 +1249,138 @@ def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
             start=start,
             end=end,
             allocation_results=allocation_results,
+            forecast_result=forecast_result,
+            forecast_manifest=(
+                None if forecast_bundle is None else forecast_bundle.manifest
+            ),
+            forecast_freshness=forecast_freshness,
         )
     except (ValueError, ArithmeticError) as exc:
         st.warning(f"Selected range is unavailable: {exc}")
         return None
 
+    if forecast_result is not None:
+        latest_forecast = why_this_weight(bundle, study, VOL_FORECAST_LABEL)
+        forecast_etfs = latest_forecast.loc[
+            latest_forecast["asset"] != CASH_LABEL
+        ].copy()
+        title_status = (
+            "current"
+            if forecast_freshness["latest_target_status"] == "current"
+            else "historical research only"
+        )
+        with st.expander(
+            f"Latest TimesFM forecast details — {title_status}",
+            expanded=False,
+        ):
+            st.write(
+                "TimesFM decides only whether each ETF's median forecast clears the "
+                "cash hurdle. Passing ETFs are then weighted by trailing volatility; "
+                "a larger forecast does not earn a larger weight."
+            )
+            st.caption(
+                f"Signal {forecast_result.latest_signal_date.date()} · intended "
+                f"execution {forecast_result.latest_execution_date.date()} · holding "
+                f"period ends {forecast_result.latest_period_end_date.date()}"
+            )
+            forecast_display = forecast_etfs[
+                [
+                    "asset",
+                    "role",
+                    "median_forecast_return",
+                    "cash_hurdle",
+                    "forecast_status",
+                    "trailing_volatility",
+                    "raw_weight",
+                    "final_weight",
+                    "reason",
+                ]
+            ].rename(
+                columns={
+                    "asset": "ETF",
+                    "role": "Role",
+                    "median_forecast_return": "Median forecast",
+                    "cash_hurdle": "Cash hurdle",
+                    "forecast_status": "Decision",
+                    "trailing_volatility": "Trailing volatility",
+                    "raw_weight": "Raw risk-balanced weight",
+                    "final_weight": "Research target",
+                    "reason": "Why this weight?",
+                }
+            )
+            st.dataframe(
+                forecast_display.style.format(
+                    {
+                        "Median forecast": "{:+.2%}",
+                        "Cash hurdle": "{:.2%}",
+                        "Trailing volatility": "{:.2%}",
+                        "Raw risk-balanced weight": "{:.2%}",
+                        "Research target": "{:.2%}",
+                    },
+                    na_rep="—",
+                ),
+                hide_index=True,
+                width="stretch",
+            )
+            price_display = forecast_etfs[
+                [
+                    "asset",
+                    "q10_period_end_price",
+                    "q50_period_end_price",
+                    "q90_period_end_price",
+                ]
+            ].rename(
+                columns={
+                    "asset": "ETF",
+                    "q10_period_end_price": "q10 price",
+                    "q50_period_end_price": "q50 price",
+                    "q90_period_end_price": "q90 price",
+                }
+            )
+            st.caption(
+                "Period-end price uncertainty: q10, q50, and q90 are separate "
+                "marginal price forecasts for the holding-period end. They are not "
+                "a calibrated holding-return interval."
+            )
+            st.dataframe(
+                price_display.style.format(
+                    {name: "{:,.2f}" for name in ("q10 price", "q50 price", "q90 price")}
+                ),
+                hide_index=True,
+                width="stretch",
+            )
+            st.markdown("#### How the forecast-filtered allocation changed")
+            st.caption(
+                "These are the research targets on their actual monthly execution "
+                "dates for your selected historical range."
+            )
+            _allocation_chart(
+                study,
+                VOL_FORECAST_LABEL,
+                key="wb_forecast_history_chart",
+            )
+            st.download_button(
+                "Download forecast allocation history CSV",
+                allocation_history_download(study, VOL_FORECAST_LABEL).to_csv(
+                    index=False
+                ),
+                file_name="etf_workbench_forecast_allocation_history.csv",
+                mime="text/csv",
+                key="wb_forecast_allocation_download",
+            )
+            st.caption(
+                "Historical replay only · pretraining overlap unknown · no local "
+                "fine-tuning · no runtime model or network call · not investment advice."
+            )
+
     target_options = [
-        item for item in options if item != CURRENT_MIX_LABEL
+        item
+        for item in options
+        if item not in (CURRENT_MIX_LABEL, SPY_REFERENCE_LABEL)
+        and not (
+            item == VOL_FORECAST_LABEL
+            and forecast_freshness["latest_target_status"] != "current"
+        )
     ]
     stored_target = st.session_state.get("wb_authoritative_target", VOL_TREND_LABEL)
     if stored_target not in target_options:
@@ -1168,7 +1608,11 @@ def render_workbench(bundle_path=DEFAULT_BUNDLE_PATH):
         "Weights are plotted on rebalance (execution) dates. The table separates "
         "the earlier signal date, rebalance date, and end of the resulting holding period."
     )
-    _allocation_chart(study, authoritative)
+    _allocation_chart(
+        study,
+        authoritative,
+        key="wb_authoritative_history_chart",
+    )
     allocation_download = allocation_history_download(study, authoritative)
     allocation_history = allocation_download.rename(
         columns={

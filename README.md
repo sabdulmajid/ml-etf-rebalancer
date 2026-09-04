@@ -122,8 +122,11 @@ a predictive distribution. TimesFM's q10 and q90 values are marginal future
 price quantiles at each horizon; they are not an 80% interval for the derived
 holding return. The evaluation is a historical replay, not an out-of-sample
 claim, and overlap between the model's pretraining data and these dates is
-unknown. The bundle is not yet rendered by Streamlit; that integration is
-deliberately isolated to a later change.
+unknown. Streamlit now reads this committed bundle locally and exposes one
+additional research comparison, **Volatility Balanced + Forecast**. TimesFM's
+median forecast is only a binary eligibility gate: an ETF must clear the cash
+hurdle, after which the existing inverse-volatility and adaptive-cap rules set
+its weight. Forecast magnitude never scales allocation.
 
 ## Methodology
 
@@ -141,6 +144,14 @@ Latest targets always use the entire artifact. Changing the historical chart
 range only changes the displayed backtest, which restarts from 100% cash. A
 valid entered Current Mix is a hypothetical constant target reset monthly, not
 a reconstruction of actual holdings history.
+
+All displayed histories align to the completed TimesFM replay periods whenever
+the forecast bundle is available, and `SPY — U.S. equity reference` uses the
+same engine, dates, costs, and cash accounting. The forecast bundle's latest
+target is transferable only while its recorded execution/holding window is
+current and the model output was produced before the execution cutoff. Missing,
+corrupt, scheduled, late, or expired forecast artifacts never disable the base
+workbench or the existing ML views.
 
 **Cash — U.S. overnight-rate proxy** uses official EFFR before April 2, 2018 and
 official SOFR from that date, with Actual/360 accrual. It is analytical and
@@ -188,6 +199,7 @@ data/features.py        Feature engineering
 portfolio/rebalance.py  ML allocation helper plus workbench ticket validation
 portfolio/research.py   Walk-forward research engine
 strategies/allocation.py Fixed workbench target generators
+strategies/forecast.py  TimesFM binary-filter target generator
 forecasting/             Offline TimesFM timing, inference, and evaluation
 build_timesfm_artifacts.py Offline deterministic forecast artifact builder
 tests/                  Local validation tests

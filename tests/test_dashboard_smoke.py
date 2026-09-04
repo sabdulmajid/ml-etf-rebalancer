@@ -3,6 +3,8 @@ import sys
 from pathlib import Path
 import datetime as dt
 from copy import deepcopy
+import json
+import shutil
 
 import pandas as pd
 import pytest
@@ -12,7 +14,9 @@ from backtest.engine import CASH_ASSET
 from dashboard.workbench import (
     ALLOCATION_LABELS,
     CURRENT_MIX_LABEL,
+    VOL_FORECAST_LABEL,
 )
+from data.timesfm import load_timesfm_bundle
 from data.workbench import load_workbench_bundle
 from portfolio.rebalance import build_rebalance_ticket
 from strategies.allocation import generate_allocation_targets
@@ -167,6 +171,120 @@ def test_streamlit_selection_reconciliation_and_invalid_current_controls(monkeyp
     assert not app.exception
 
 
+def test_late_forecast_history_is_visible_but_target_is_not_transferable(monkeypatch):
+    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
+    app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=30).run()
+
+    comparison = next(
+        widget for widget in app.multiselect if widget.label == "Comparison series"
+    )
+    target = app.selectbox(key="wb_authoritative_target")
+    assert VOL_FORECAST_LABEL in comparison.options
+    assert VOL_FORECAST_LABEL not in target.options
+    assert any(
+        "historical research is available" in warning.value
+        and "target transfer stays disabled" in warning.value
+        for warning in app.warning
+    )
+    assert any(
+        "historical research only" in expander.label.lower()
+        for expander in app.expander
+    )
+    assert not app.exception
+
+
+@pytest.mark.parametrize("kind", ["missing", "corrupt"])
+def test_forecast_bundle_failure_leaves_base_workbench_available(
+    tmp_path, monkeypatch, kind
+):
+    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
+    forecast_path = tmp_path / "timesfm"
+    if kind == "corrupt":
+        shutil.copytree(ROOT / "artifacts" / "timesfm", forecast_path)
+        signals = forecast_path / "forecast_signals.csv"
+        signals.write_text(signals.read_text() + "\n")
+    source = f"""
+import streamlit as st
+from dashboard.workbench import render_workbench
+render_workbench(timesfm_bundle_path=r{str(forecast_path)!r})
+st.write('base-and-ml-sentinel')
+"""
+    app = AppTest.from_string(source, default_timeout=20).run()
+
+    assert not app.exception
+    assert any("forecast research is temporarily unavailable" in item.value.lower()
+               for item in app.info)
+    comparison = next(
+        widget for widget in app.multiselect if widget.label == "Comparison series"
+    )
+    assert "Volatility Balanced" in comparison.options
+    assert VOL_FORECAST_LABEL not in comparison.options
+    assert any("base-and-ml-sentinel" in item.value for item in app.markdown)
+
+
+def test_timely_forecast_target_transfers_exactly_to_portfolio_lab(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
+    timely_path = tmp_path / "timesfm"
+    shutil.copytree(ROOT / "artifacts" / "timesfm", timely_path)
+    manifest_path = timely_path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    latest_generation_id = manifest["model_generations"][-1]["id"]
+    generation = next(
+        item
+        for item in manifest["model_generations"]
+        if item["id"] == latest_generation_id
+    )
+    generation["generated_at_utc"] = "2026-09-01T19:00:00Z"
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+    source = f"""
+from dashboard.workbench import render_portfolio_lab, render_workbench
+render_workbench(timesfm_bundle_path=r{str(timely_path)!r})
+render_portfolio_lab()
+"""
+    app = AppTest.from_string(source, default_timeout=30).run()
+    assert not app.exception
+    app.checkbox(key="wb_current_enabled").set_value(True).run()
+    target_selector = app.selectbox(key="wb_authoritative_target")
+    assert VOL_FORECAST_LABEL in target_selector.options
+    target_selector.set_value(VOL_FORECAST_LABEL).run()
+    app.button(key="wb_send_to_portfolio_lab").click().run()
+
+    transfer = deepcopy(app.session_state["portfolio_lab_transfer"])
+    assert transfer["strategy"] == VOL_FORECAST_LABEL
+    assert transfer["execution_status"] == "current"
+    selected = tuple(transfer["selected_etfs"])
+    target = pd.Series(transfer["target_weights"], dtype=float).reindex(
+        [*selected, CASH_ASSET]
+    )
+    workbench = load_workbench_bundle()
+    forecasts = load_timesfm_bundle(timely_path)
+    from strategies.forecast import generate_forecast_allocation_targets
+
+    expected = generate_forecast_allocation_targets(
+        workbench.adjusted_close.loc[:, selected],
+        selected,
+        forecasts.signals,
+        as_of=workbench.signal_as_of,
+    ).latest_target
+    pd.testing.assert_series_equal(target, expected, check_names=False)
+    ticket = build_rebalance_ticket(
+        transfer["current_weights"],
+        transfer["target_weights"],
+        selected,
+        transaction_cost_bps=transfer["transaction_cost_bps"],
+    )
+    assert ticket.download_frame()["target_weight"].sum() == pytest.approx(1.0)
+    assert CASH_ASSET not in set(ticket.security_orders["asset"])
+    assert any(
+        "Move from your current mix to the proposal" in item.value
+        for item in app.markdown
+    )
+    assert not app.exception
+
+
 def test_comparison_defaults_follow_selected_etf_tuple(monkeypatch):
     monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
     app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=20).run()
@@ -177,11 +295,13 @@ def test_comparison_defaults_follow_selected_etf_tuple(monkeypatch):
     one = next(widget for widget in app.multiselect if widget.label == "Comparison series")
     assert one.value == [
         "Volatility Balanced + Trend",
+        "Volatility Balanced + Forecast",
         "Buy & Hold",
         "Cash — U.S. overnight-rate proxy",
     ]
     assert any(
-        "keeps holding the ETF" in item.value and "switches between that ETF and cash" in item.value
+        "keeps holding the ETF" in item.value
+        and "filtered approaches switch between that ETF" in item.value
         for item in app.info
     )
     app.multiselect(key="wb_selected_etfs").set_value(["SPY", "IEF", "GLD"]).run()

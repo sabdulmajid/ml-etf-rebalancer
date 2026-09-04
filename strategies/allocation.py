@@ -58,7 +58,8 @@ def position_cap(selected_count, policy=DEFAULT_POLICY):
     return min(1.0, policy.cap_multiplier / selected_count)
 
 
-def _validate_prices_and_selection(prices, selected, policy):
+def validate_price_selection(prices, selected, policy=DEFAULT_POLICY):
+    """Validate and order a daily price matrix for one selected ETF set."""
     if not isinstance(prices, pd.DataFrame):
         raise TypeError("prices must be a pandas DataFrame")
     if prices.empty or not prices.columns.is_unique:
@@ -117,9 +118,39 @@ def _capped_waterfill(scores, cap):
     return result
 
 
+def allocate_inverse_volatility(volatility, eligible, policy=DEFAULT_POLICY):
+    """Return capped ETF weights for one signal, leaving infeasible mass unallocated.
+
+    This is the single implementation of the workbench's inverse-volatility and
+    adaptive-cap policy.  Callers decide eligibility; forecast scores, trend
+    strength, and realized outcomes never scale the weights returned here.
+    """
+    volatility = pd.Series(volatility, dtype=float)
+    eligible = pd.Series(eligible, index=volatility.index, dtype=bool)
+    selected_count = len(volatility)
+    cap = position_cap(selected_count, policy)
+    scores = (1.0 / volatility).where(eligible & (volatility > 1e-12), 0.0)
+    scores = scores.replace([np.inf, -np.inf], 0.0).fillna(0.0)
+    allocated = _capped_waterfill(scores, cap)
+    return allocated.reindex(volatility.index, fill_value=0.0)
+
+
 def _normalize_rows(scores):
     totals = scores.sum(axis=1).replace(0.0, np.nan)
     return scores.div(totals, axis=0).fillna(0.0)
+
+
+def trailing_volatility_on_dates(prices, signal_dates, policy=DEFAULT_POLICY):
+    """Estimate the versioned trailing daily volatility at supplied signal dates."""
+    daily_returns = prices.pct_change(fill_method=None)
+    rolling = (
+        daily_returns.rolling(
+            window=policy.volatility_lookback_days,
+            min_periods=policy.minimum_volatility_observations,
+        ).std(ddof=1)
+        * math.sqrt(policy.volatility_annualization)
+    )
+    return rolling.reindex(pd.DatetimeIndex(signal_dates))
 
 
 def _diagnostic_frame(
@@ -215,7 +246,7 @@ def generate_allocation_targets(
     """
     if strategy not in SUPPORTED_STRATEGIES:
         raise ValueError(f"unsupported strategy: {strategy}")
-    prices, selected = _validate_prices_and_selection(prices, selected_etfs, policy)
+    prices, selected = validate_price_selection(prices, selected_etfs, policy)
     common_prices = prices.loc[:, selected].dropna(how="any")
     if common_prices.empty:
         raise ValueError("selected ETFs have no shared price history")
@@ -229,20 +260,14 @@ def generate_allocation_targets(
     if monthly_signals.empty:
         raise ValueError("selected ETFs have no completed signal month")
 
-    daily_returns = prices.loc[:, selected].pct_change(fill_method=None)
-    rolling_volatility = (
-        daily_returns.rolling(
-            window=policy.volatility_lookback_days,
-            min_periods=policy.minimum_volatility_observations,
-        ).std(ddof=1)
-        * math.sqrt(policy.volatility_annualization)
-    )
     monthly_prices = prices.loc[:, selected].reindex(monthly_signals)
     trend_average = monthly_prices.rolling(
         window=policy.trend_months, min_periods=policy.trend_months
     ).mean()
 
-    signal_volatility = rolling_volatility.reindex(monthly_signals)
+    signal_volatility = trailing_volatility_on_dates(
+        prices.loc[:, selected], monthly_signals, policy=policy
+    )
     trend_ready = monthly_prices.notna() & trend_average.notna()
     trend_pass = trend_ready & (monthly_prices > trend_average)
     history_ready = (
@@ -286,8 +311,15 @@ def generate_allocation_targets(
     else:
         final_etf = pd.DataFrame(0.0, index=usable_signals, columns=selected)
         for signal_date in usable_signals:
-            allocated = _capped_waterfill(allocation_scores.loc[signal_date], cap)
-            final_etf.loc[signal_date, allocated.index] = allocated
+            if strategy == VOLATILITY_BALANCED_TREND:
+                signal_eligible = eligible.loc[signal_date] & trend_pass.loc[signal_date]
+            else:
+                signal_eligible = eligible.loc[signal_date]
+            final_etf.loc[signal_date] = allocate_inverse_volatility(
+                signal_volatility.loc[signal_date],
+                signal_eligible,
+                policy=policy,
+            )
     target_by_signal = final_etf.copy()
     target_by_signal[CASH_ASSET] = (1.0 - final_etf.sum(axis=1)).clip(lower=0.0)
 

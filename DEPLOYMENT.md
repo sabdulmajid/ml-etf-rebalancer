@@ -213,10 +213,22 @@ rename replaces the prior bundle. Review the manifest's checkpoint revision,
 workbench checksums, row counts, mode coverage, dependency versions, performance
 timings, and `validation_status` before committing it.
 
-The public app must load the CSV/JSON bundle through `data.timesfm`; it must not
-import `build_timesfm_artifacts`, `forecasting.timesfm.TimesFM3Runner`, Torch, or
-TimesFM. A missing or invalid forecast bundle must never prevent the existing
+The public app loads the CSV/JSON bundle through `data.timesfm`; it does not
+import `build_timesfm_artifacts`, instantiate
+`forecasting.timesfm.TimesFM3Runner`, or import Torch/TimesFM. The validated
+bundle is cached using content checksums, so normal Streamlit reruns do not pay
+the strict validation cost and any replaced or corrupt artifact invalidates the
+cache key. A missing or invalid forecast bundle never prevents the existing
 workbench or ML research experience from starting.
+
+`Volatility Balanced + Forecast` uses only the multivariate rows and only as a
+binary gate (`forecast_edge > 0`). Historical comparisons include realized
+forecast origins and align every series to those same periods. The latest
+forecast target is disabled when it was generated after its intended execution
+close, has expired, or has not yet reached its execution date. Historical replay
+remains visible in those states, but cannot be sent to Portfolio Lab. This is a
+same-process local-artifact feature; no model, checkpoint, HTTP request, or
+separate service is used by Streamlit.
 
 ## Deterministic Local UI Capture
 
