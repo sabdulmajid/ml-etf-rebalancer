@@ -1,0 +1,124 @@
+{
+  "schema_version": "timesfm-research-bundle-v1",
+  "generated_at_utc": "2026-09-04T04:55:50.413716Z",
+  "artifact_kind": "timesfm3-zero-shot-research",
+  "publication_allowed": true,
+  "model_execution_status": "complete",
+  "checkpoint": {
+    "id": "google/timesfm-3.0-pytorch",
+    "revision": "43046b85ec22d584a13f8098c2ed39c889e129c2"
+  },
+  "configuration": {
+    "context_sessions": 512,
+    "universe_mode": "all-14-etfs-jointly",
+    "covariates": "none",
+    "fine_tuning": false,
+    "quantile_levels": [
+      0.1,
+      0.2,
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.7,
+      0.8,
+      0.9
+    ],
+    "holding_score": "q50(period_end) / q50(execution) - 1",
+    "cash_hurdle": "last overnight-rate effective date strictly before signal; Actual/360 over execution-to-period-end calendar days",
+    "evaluator": {
+      "return_quantiles": true,
+      "use_symmetric_averaging": true,
+      "make_positive": true,
+      "sort_quantiles": true,
+      "use_znorm": false,
+      "padding_mode": "none"
+    },
+    "primary_mode": "timesfm3_multivariate",
+    "per_core_batch_size": 16
+  },
+  "model_modes": [
+    "last_value",
+    "timesfm3_univariate",
+    "timesfm3_multivariate"
+  ],
+  "ticker_order": [
+    "SPY",
+    "IWM",
+    "EFA",
+    "EEM",
+    "AGG",
+    "BIL",
+    "SHY",
+    "IEF",
+    "TLT",
+    "TIP",
+    "LQD",
+    "HYG",
+    "GLD",
+    "DBC"
+  ],
+  "workbench_input": {
+    "schema_version": "workbench-bundle-v1",
+    "price_data_as_of": "2026-07-31",
+    "last_complete_month": "2026-07-31",
+    "file_sha256": {
+      "adjusted_close.csv": "a297a98f115bd65de4b41ce2bd004439d0f0341f8e0cbcb854d6d91ae1c39e88",
+      "cash_index.csv": "0f7b230ca493710830a794038714e6fad4598c8b3944a479a20876e20fc62e17",
+      "instruments.csv": "8a385dde603a68c155a7fb96edbbce646bece6bbaaeeb500879db28370261754",
+      "manifest.json": "0dfa549f34ca6a579f6702ff4f6f24be45c4fcde776704e5899cd52fdd89f3cc"
+    }
+  },
+  "forecast_signal_start": "2009-06-30",
+  "forecast_signal_end": "2026-07-31",
+  "dependency_versions": {
+    "numpy": "2.2.6",
+    "pandas": "2.3.3",
+    "exchange-calendars": "4.13.2",
+    "timesfm": "3.0.1",
+    "torch": "2.14.0+cpu",
+    "huggingface-hub": "1.30.0",
+    "safetensors": "0.8.0"
+  },
+  "git_sha": "7520fa6b2b482cabf8a7ffd5d0422a110c231367",
+  "git_dirty_at_build": false,
+  "pipeline_version": "timesfm-artifact-builder-v1",
+  "runtime": {
+    "device": "cpu",
+    "builder_peak_rss_kb": 2915180
+  },
+  "performance": {
+    "last_value": {
+      "forecast_origins": 206,
+      "total_inference_seconds": 0.0,
+      "median_inference_seconds": 0.0,
+      "maximum_inference_seconds": 0.0
+    },
+    "timesfm3_multivariate": {
+      "forecast_origins": 206,
+      "total_inference_seconds": 265.8876891020045,
+      "median_inference_seconds": 1.217235536998487,
+      "maximum_inference_seconds": 1.9724936520069605
+    },
+    "timesfm3_univariate": {
+      "forecast_origins": 206,
+      "total_inference_seconds": 305.2053126630635,
+      "median_inference_seconds": 1.4162204435051535,
+      "maximum_inference_seconds": 2.071025634999387
+    }
+  },
+  "refresh": {
+    "mode": "full",
+    "reused_mode_signal_groups": 0,
+    "generated_mode_signal_groups": 618
+  },
+  "validation_status": "passed",
+  "row_counts": {
+    "forecast_signals.csv": 8652,
+    "forecast_metrics.csv": 45
+  },
+  "file_sha256": {
+    "forecast_signals.csv": "f9fa2bbd7e213f4b33f3fd659a77cd484a1275650489459126b113fc700e1d1a",
+    "forecast_metrics.csv": "e461eba70dba419e5da8f6443e92b1240b40467d6157d24a208de6b9513c1487"
+  }
+}
