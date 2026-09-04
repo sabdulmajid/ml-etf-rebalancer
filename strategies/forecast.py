@@ -24,6 +24,7 @@ FORECAST_POLICY_VERSION = "timesfm-filter-policy-v1"
 
 _REQUIRED_FORECAST_COLUMNS = {
     "model_mode",
+    "model_generation_id",
     "signal_date",
     "execution_date",
     "period_end_date",
@@ -54,6 +55,7 @@ class ForecastAllocationResult:
     latest_signal_date: pd.Timestamp
     latest_execution_date: pd.Timestamp
     latest_period_end_date: pd.Timestamp
+    latest_model_generation_id: str
 
 
 def _normalize_forecasts(forecasts, selected):
@@ -104,7 +106,14 @@ def _normalize_forecasts(forecasts, selected):
             raise ValueError(
                 f"forecast origin {signal_date.date()} does not contain every selected ETF"
             )
-        if group[["execution_date", "period_end_date", "evaluation_status"]].nunique().max() != 1:
+        if group[
+            [
+                "execution_date",
+                "period_end_date",
+                "evaluation_status",
+                "model_generation_id",
+            ]
+        ].nunique().max() != 1:
             raise ValueError(f"forecast origin {signal_date.date()} has inconsistent timing")
     return rows.sort_values(["signal_date", "ticker"]).reset_index(drop=True)
 
@@ -142,16 +151,16 @@ def _targets_and_diagnostics(rows, selected, volatility_by_signal, policy):
         )
         for ticker in selected:
             if not volatility_ready.loc[ticker]:
-                status = "Fail"
+                status = "Insufficient volatility history"
                 reason = "Insufficient or invalid trailing volatility."
             elif not forecast_pass.loc[ticker]:
-                status = "Fail"
+                status = "Held in cash"
                 reason = "Median forecast did not clear the cash return hurdle."
             elif etf_weights.loc[ticker] >= cap - 1e-12:
-                status = "Pass"
+                status = "Eligible"
                 reason = "Forecast cleared cash; weight is limited by the position cap."
             else:
-                status = "Pass"
+                status = "Eligible"
                 reason = "Forecast cleared cash; weighted by trailing volatility."
             diagnostic_rows.append(
                 {
@@ -254,6 +263,9 @@ def generate_forecast_allocation_targets(
     ].drop_duplicates()
     if len(latest_timing) != 1:
         raise ValueError("latest forecast origin has ambiguous timing")
+    generation_ids = latest_rows["model_generation_id"].unique().tolist()
+    if len(generation_ids) != 1:
+        raise ValueError("latest forecast origin has ambiguous model provenance")
     return ForecastAllocationResult(
         strategy=VOLATILITY_BALANCED_FORECAST,
         policy=policy,
@@ -269,4 +281,5 @@ def generate_forecast_allocation_targets(
         latest_signal_date=latest_signal,
         latest_execution_date=pd.Timestamp(latest_timing["execution_date"].iloc[0]),
         latest_period_end_date=pd.Timestamp(latest_timing["period_end_date"].iloc[0]),
+        latest_model_generation_id=generation_ids[0],
     )

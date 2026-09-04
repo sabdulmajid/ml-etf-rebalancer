@@ -55,6 +55,8 @@ def test_forecast_targets_support_one_through_eight_etfs_and_cap(bundles, count)
     assert result.latest_target.sum() == pytest.approx(1.0)
     assert result.schedule.weights[list(selected)].max().max() <= position_cap(count) + 1e-12
     assert result.latest_target.loc[list(selected)].max() <= position_cap(count) + 1e-12
+    latest_generation_ids = forecasts.latest()["model_generation_id"].unique().tolist()
+    assert result.latest_model_generation_id == latest_generation_ids[0]
 
 
 def test_one_etf_forecast_filter_naturally_switches_between_etf_and_cash(bundles):
@@ -80,6 +82,12 @@ def test_one_etf_forecast_filter_naturally_switches_between_etf_and_cash(bundles
     assert negative.latest_target.to_dict() == pytest.approx(
         {"SPY": 0.0, CASH_ASSET: 1.0}
     )
+    assert negative.latest_diagnostics["forecast_status"].unique().tolist() == [
+        "Held in cash"
+    ]
+    assert positive.latest_diagnostics["forecast_status"].unique().tolist() == [
+        "Eligible"
+    ]
 
 
 def test_forecast_filter_removes_some_or_all_assets_without_magnitude_weighting(bundles):

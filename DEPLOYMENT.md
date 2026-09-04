@@ -223,12 +223,16 @@ workbench or ML research experience from starting.
 
 `Volatility Balanced + Forecast` uses only the multivariate rows and only as a
 binary gate (`forecast_edge > 0`). Historical comparisons include realized
-forecast origins and align every series to those same periods. The latest
-forecast target is disabled when it was generated after its intended execution
-close, has expired, or has not yet reached its execution date. Historical replay
-remains visible in those states, but cannot be sent to Portfolio Lab. This is a
-same-process local-artifact feature; no model, checkpoint, HTTP request, or
-separate service is used by Streamlit.
+forecast origins and align every displayed series to those same periods only
+when Forecast is selected; deselecting it preserves the standard strategies'
+longer native history. The model always receives all 14 curated histories even
+when only one ETF is selected for allocation. Latest tactical targets are
+disabled when generated after their intended execution close, expired, or still
+scheduled before that close. Historical replay remains visible in those states,
+but cannot be sent to Portfolio Lab. Model-generation identity/time, execution
+cutoff, workbench refresh, and forecast-bundle refresh remain separate in target
+provenance. This is a same-process local-artifact feature; no model, checkpoint,
+HTTP request, or separate service is used by Streamlit.
 
 ## Deterministic Local UI Capture
 

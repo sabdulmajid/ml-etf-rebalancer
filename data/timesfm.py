@@ -136,8 +136,11 @@ class TimesFMResearchBundle:
             )
         elif as_of > period_end:
             status, reason = "disabled", "latest forecast holding period has expired"
-        elif as_of < execution:
-            status, reason = "scheduled", "latest target awaits its execution date"
+        elif as_of < execution_close:
+            status, reason = (
+                "scheduled",
+                "latest target awaits its intended execution close",
+            )
         else:
             status, reason = "current", None
         return {

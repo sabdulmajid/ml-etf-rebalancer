@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import exchange_calendars as xcals
 
 from backtest.engine import (
     CASH_ASSET,
@@ -286,6 +287,7 @@ def build_workbench_study(
     forecast_result=None,
     forecast_manifest=None,
     forecast_freshness=None,
+    comparison_labels=None,
 ):
     """Calculate every compatible series through the common PR1 engine."""
     if not isinstance(bundle, WorkbenchBundle):
@@ -309,6 +311,9 @@ def build_workbench_study(
         label: result.schedule.select(start=cash_history_start)
         for label, result in allocation_results.items()
     }
+    align_to_forecast = forecast_result is not None and (
+        comparison_labels is None or VOL_FORECAST_LABEL in set(comparison_labels)
+    )
     if forecast_result is not None:
         if (
             not isinstance(forecast_result, ForecastAllocationResult)
@@ -316,16 +321,22 @@ def build_workbench_study(
         ):
             raise ValueError("forecast allocation does not match the selected ETFs")
         forecast_schedule = forecast_result.schedule.select(start=cash_history_start)
-        schedules = {
-            label: schedule.select(
-                start=forecast_schedule.execution_dates[0],
-                end=forecast_schedule.period_end_dates.iloc[-1],
-            )
-            for label, schedule in schedules.items()
-        }
-        expected_dates = forecast_schedule.execution_dates
-        if any(not schedule.execution_dates.equals(expected_dates) for schedule in schedules.values()):
-            raise ValueError("forecast and workbench histories do not share exact periods")
+        if align_to_forecast:
+            schedules = {
+                label: schedule.select(
+                    start=forecast_schedule.execution_dates[0],
+                    end=forecast_schedule.period_end_dates.iloc[-1],
+                )
+                for label, schedule in schedules.items()
+            }
+            expected_dates = forecast_schedule.execution_dates
+            if any(
+                not schedule.execution_dates.equals(expected_dates)
+                for schedule in schedules.values()
+            ):
+                raise ValueError(
+                    "forecast and workbench histories do not share exact periods"
+                )
         schedules[VOL_FORECAST_LABEL] = forecast_schedule
     base_schedule = schedules[VOL_BALANCED_LABEL]
     asset_returns, cash_returns = holding_period_returns(
@@ -378,15 +389,31 @@ def build_workbench_study(
 
     backtests = {}
     for label, schedule in schedules.items():
-        # All schedules share the selected-set timing contract. Supplying the
-        # exact same return matrices enforces identical entry, drift and cost.
+        if schedule.execution_dates.equals(base_schedule.execution_dates):
+            label_asset_returns, label_cash_returns = asset_returns, cash_returns
+        else:
+            label_asset_returns, label_cash_returns = holding_period_returns(
+                bundle, schedule, selected
+            )
+        # A non-selected forecast retains its complete replay for the research
+        # detail view; it cannot narrow the displayed standard-strategy range.
+        label_start = (
+            None
+            if label == VOL_FORECAST_LABEL and not align_to_forecast
+            else start
+        )
+        label_end = (
+            None
+            if label == VOL_FORECAST_LABEL and not align_to_forecast
+            else end
+        )
         backtests[label] = run_backtest(
             schedule,
-            asset_returns,
-            cash_returns,
+            label_asset_returns,
+            label_cash_returns,
             transaction_cost_bps=transaction_cost_bps,
-            start=start,
-            end=end,
+            start=label_start,
+            end=label_end,
         )
     if "SPY" not in selected:
         external_target = pd.Series(
@@ -462,8 +489,70 @@ def allocation_chart_data(study, label):
     return frame
 
 
+def standard_target_freshness(bundle, allocation, as_of=None):
+    """Validate the intended next-close window for a standard tactical target."""
+    if as_of is None:
+        as_of = pd.Timestamp.now(tz="UTC")
+    as_of_stamp = pd.Timestamp(as_of)
+    if as_of_stamp.tz is not None:
+        as_of_stamp = as_of_stamp.tz_convert("UTC").tz_localize(None)
+    signal_date = pd.Timestamp(allocation.latest_signal_date).normalize()
+    calendar = xcals.get_calendar(
+        "XNYS",
+        start=signal_date - pd.Timedelta(days=7),
+        end=signal_date + pd.Timedelta(days=70),
+    )
+    execution_date = pd.Timestamp(
+        calendar.date_to_session(signal_date + pd.Timedelta(days=1), direction="next")
+    ).tz_localize(None)
+    period_end_month = signal_date.to_period("M") + 2
+    period_end_date = pd.Timestamp(
+        calendar.date_to_session(period_end_month.start_time, direction="next")
+    ).tz_localize(None)
+    execution_close = pd.Timestamp(calendar.session_close(execution_date))
+    if execution_close.tz is not None:
+        execution_close = execution_close.tz_convert("UTC").tz_localize(None)
+    generated_at = pd.Timestamp(bundle.manifest["generated_at_utc"])
+    if generated_at.tz is not None:
+        generated_at = generated_at.tz_convert("UTC").tz_localize(None)
+
+    if generated_at > as_of_stamp:
+        status, reason = "disabled", "target artifact was generated in the future"
+    elif generated_at > execution_close:
+        status, reason = (
+            "disabled",
+            "target artifact was generated after its intended execution close",
+        )
+    elif as_of_stamp > period_end_date:
+        status, reason = "disabled", "latest target holding period has expired"
+    elif as_of_stamp < execution_close:
+        status, reason = (
+            "scheduled",
+            "latest target awaits its intended execution close",
+        )
+    else:
+        status, reason = "current", None
+    return {
+        "latest_target_status": status,
+        "reason": reason,
+        "latest_signal_date": str(signal_date.date()),
+        "latest_execution_date": str(execution_date.date()),
+        "latest_execution_cutoff_utc": execution_close.isoformat() + "Z",
+        "latest_period_end_date": str(period_end_date.date()),
+        "bundle_refreshed_at_utc": generated_at.isoformat() + "Z",
+    }
+
+
 def target_provenance(bundle, study, label):
     """Return authoritative timing and artifact provenance for a latest target."""
+    extra = {
+        "model_generation_id": None,
+        "model_generated_at_utc": None,
+        "execution_cutoff_utc": None,
+        "bundle_refreshed_at_utc": bundle.manifest["generated_at_utc"],
+        "workbench_bundle_refreshed_at_utc": bundle.manifest["generated_at_utc"],
+        "forecast_bundle_refreshed_at_utc": None,
+    }
     if label == CASH_LABEL_SHORT:
         signal_as_of = "not_applicable_no_tactical_signal"
         execution_status = "constant_target_effective_for_analytical_ticket"
@@ -489,15 +578,44 @@ def target_provenance(bundle, study, label):
             study.forecast_freshness or {}
         ).get("latest_target_status", "disabled")
         policy_version = allocation.forecast_policy_version
+        generation_id = allocation.latest_model_generation_id
+        generation = next(
+            (
+                item
+                for item in study.forecast_manifest["model_generations"]
+                if item["id"] == generation_id
+            ),
+            None,
+        )
+        if generation is None:
+            raise ValueError("forecast target references unknown model provenance")
+        extra = {
+            "model_generation_id": generation_id,
+            "model_generated_at_utc": generation["generated_at_utc"],
+            "execution_cutoff_utc": (study.forecast_freshness or {}).get(
+                "latest_execution_cutoff_utc"
+            ),
+            "bundle_refreshed_at_utc": study.forecast_manifest["bundle_refresh"][
+                "generated_at_utc"
+            ],
+            "workbench_bundle_refreshed_at_utc": bundle.manifest[
+                "generated_at_utc"
+            ],
+            "forecast_bundle_refreshed_at_utc": study.forecast_manifest[
+                "bundle_refresh"
+            ]["generated_at_utc"],
+        }
     else:
         allocation = study.allocation_results[label]
-        signal_as_of = str(pd.Timestamp(allocation.latest_signal_date).date())
-        execution_status = (
-            "pending_next_trading_close"
-            if allocation.latest_execution_date is None
-            else str(pd.Timestamp(allocation.latest_execution_date).date())
+        standard_freshness = standard_target_freshness(
+            bundle, allocation, as_of=_test_as_of()
         )
+        signal_as_of = standard_freshness["latest_signal_date"]
+        execution_status = standard_freshness["latest_target_status"]
         policy_version = allocation.policy.version
+        extra["execution_cutoff_utc"] = standard_freshness[
+            "latest_execution_cutoff_utc"
+        ]
     result = {
         "signal_as_of": signal_as_of,
         "execution_status": execution_status,
@@ -513,6 +631,7 @@ def target_provenance(bundle, study, label):
                 study.backtests[label].periods["period_end_date"].iloc[-1]
             ).date()
         ),
+        **extra,
     }
     if label == VOL_FORECAST_LABEL:
         result.update(
@@ -542,9 +661,9 @@ def target_provenance_summary(provenance):
         signal_text = f"Signal as of {provenance['signal_as_of']}"
 
     if provenance["execution_status"] == "current":
-        execution_text = "Current forecast target"
+        execution_text = "Current target; intended execution close has passed"
     elif provenance["execution_status"] == "scheduled":
-        execution_text = "Forecast target scheduled; execution date has not arrived"
+        execution_text = "Target scheduled; intended execution close has not arrived"
     elif provenance["execution_status"] == "disabled":
         execution_text = "Historical research only; latest target is not transferable"
     elif provenance["execution_status"] == "pending_next_trading_close":
@@ -567,7 +686,7 @@ def latest_target_download(bundle, study, label):
     target_provenance_fields = {
         key: value
         for key, value in provenance.items()
-        if key != "displayed_history_through"
+        if key not in {"displayed_history_through", "artifact_generated_at_utc"}
     }
     return pd.DataFrame(
         {
@@ -627,15 +746,15 @@ def why_this_weight(bundle, study, label):
                 }
             )
         cash_weight = float(target.loc[CASH_ASSET])
-        passed = sum(row["forecast_status"] == "Pass" for row in rows)
-        if passed == 0:
+        eligible = sum(row["forecast_status"] == "Eligible" for row in rows)
+        if eligible == 0:
             reason = (
                 "No selected ETF's median forecast cleared cash, so the research "
                 "target is 100% analytical cash."
             )
         elif cash_weight > WEIGHT_TOLERANCE:
             reason = (
-                "Cash holds the amount displaced by forecast failures and position caps."
+                "Cash holds the amount displaced by ETFs held in cash and position caps."
             )
         else:
             reason = "All capital is allocated among ETFs whose forecasts cleared cash."
@@ -762,6 +881,39 @@ def _format_metrics(study, labels):
             }
         )
     return pd.DataFrame(rows).replace({None: np.nan}).set_index("Series")
+
+
+def forecast_check_summary(metrics):
+    """Return a compact, display-ready view of validated offline forecast checks."""
+    overall = metrics.loc[metrics["scope"] == "overall"].copy()
+    labels = {
+        "last_value": "Last value (point baseline)",
+        "timesfm3_univariate": "TimesFM-3 — each ETF separately",
+        "timesfm3_multivariate": "TimesFM-3 — all 14 ETFs together",
+    }
+    overall["Model"] = overall["model_mode"].map(labels)
+    if overall["Model"].isna().any() or set(overall["model_mode"]) != set(labels):
+        raise ValueError("forecast checks do not contain the expected model modes")
+    return overall[
+        [
+            "Model",
+            "observations",
+            "holding_return_mae",
+            "period_end_price_mase",
+            "directional_accuracy",
+            "mean_pinball_loss",
+            "interval_80_coverage",
+        ]
+    ].rename(
+        columns={
+            "observations": "Forecasts",
+            "holding_return_mae": "Return MAE ↓",
+            "period_end_price_mase": "Period-end price MASE ↓",
+            "directional_accuracy": "Direction accuracy ↑",
+            "mean_pinball_loss": "Pinball loss ↓",
+            "interval_80_coverage": "q10–q90 price coverage",
+        }
+    )
 
 
 def _line_chart(study, labels, column, title, percent=False):
@@ -1043,7 +1195,8 @@ def render_workbench(
     elif forecast_freshness["latest_target_status"] == "scheduled":
         st.info(
             "TimesFM historical research is available. Its newest forecast is "
-            "scheduled for a future execution date, so it is not yet transferable."
+            "scheduled, but its intended execution close has not occurred, so it "
+            "is not yet transferable."
         )
     else:
         st.success(
@@ -1113,40 +1266,27 @@ def render_workbench(
                     "Forecast calculations are unavailable for this ETF set; "
                     "the standard workbench remains available."
                 )
-        bounds_schedule = (
-            forecast_result.schedule
-            if forecast_result is not None
-            else allocation_results[VOL_BALANCED_LABEL].schedule.select(
-                start=pd.Timestamp(bundle.cash_index.index.min())
-            )
+        standard_freshness = standard_target_freshness(
+            bundle,
+            allocation_results[VOL_BALANCED_LABEL],
+            as_of=_test_as_of(),
         )
-        earliest_execution = pd.Timestamp(bounds_schedule.execution_dates[0])
-        latest_period_end = pd.Timestamp(bounds_schedule.period_end_dates.iloc[-1])
     except (ValueError, ArithmeticError) as exc:
         st.error(f"This ETF set cannot be calculated: {exc}")
         st.session_state.pop("portfolio_lab_transfer", None)
         return None
 
-    default_start = max(
-        earliest_execution,
-        latest_period_end - pd.DateOffset(years=10),
-    )
-    date_range = controls[1].date_input(
-        "Historical range",
-        value=(default_start.date(), latest_period_end.date()),
-        min_value=earliest_execution.date(),
-        max_value=latest_period_end.date(),
-        key="wb_date_range",
-    )
-    if not isinstance(date_range, (tuple, list)) or len(date_range) != 2:
-        st.info("Choose both a start and end date.")
-        return None
-    start, end = date_range
-    st.caption(
-        "Historical-range rule: every selected range restarts at $1 in analytical "
-        "cash. The first move into ETFs counts toward turnover and transaction cost. "
-        "Changing this range does not change the latest proposed target."
-    )
+    if standard_freshness["latest_target_status"] == "disabled":
+        st.warning(
+            f"{VOL_BALANCED_LABEL} and {VOL_TREND_LABEL} histories remain available, "
+            "but their newest targets are historical-only: "
+            f"{standard_freshness['reason']}. They cannot be sent to Portfolio Lab."
+        )
+    elif standard_freshness["latest_target_status"] == "scheduled":
+        st.info(
+            f"The newest {VOL_BALANCED_LABEL} and {VOL_TREND_LABEL} targets await "
+            "their intended execution close and are not yet transferable."
+        )
 
     options = available_comparisons(
         selected,
@@ -1182,6 +1322,49 @@ def render_workbench(
     if not comparisons:
         st.warning("Select at least one comparison series.")
         return None
+    forecast_selected = VOL_FORECAST_LABEL in comparisons
+    bounds_schedule = (
+        forecast_result.schedule
+        if forecast_selected
+        else allocation_results[VOL_BALANCED_LABEL].schedule.select(
+            start=pd.Timestamp(bundle.cash_index.index.min())
+        )
+    )
+    earliest_execution = pd.Timestamp(bounds_schedule.execution_dates[0])
+    latest_period_end = pd.Timestamp(bounds_schedule.period_end_dates.iloc[-1])
+    default_start = max(
+        earliest_execution,
+        latest_period_end - pd.DateOffset(years=10),
+    )
+    date_key = "wb_date_range"
+    saved_range = st.session_state.get(date_key)
+    if isinstance(saved_range, (tuple, list)) and len(saved_range) == 2:
+        saved_start, saved_end = (pd.Timestamp(value) for value in saved_range)
+        if saved_start < earliest_execution or saved_end > latest_period_end:
+            st.session_state.pop(date_key, None)
+    date_range = controls[1].date_input(
+        "Historical range",
+        value=(default_start.date(), latest_period_end.date()),
+        min_value=earliest_execution.date(),
+        max_value=latest_period_end.date(),
+        key=date_key,
+    )
+    if not isinstance(date_range, (tuple, list)) or len(date_range) != 2:
+        st.info("Choose both a start and end date.")
+        return None
+    start, end = date_range
+    alignment_text = (
+        "Because the forecast comparison is selected, every displayed line uses "
+        "the same completed TimesFM replay periods."
+        if forecast_selected
+        else "Forecast is not selected, so standard approaches keep their longer native history."
+    )
+    st.caption(
+        "Historical-range rule: every selected range restarts at $1 in analytical "
+        "cash. The first move into ETFs counts toward turnover and transaction cost. "
+        "Changing this range does not change the latest proposed target. "
+        + alignment_text
+    )
     if len(selected) == 1:
         st.info(
             f"With one ETF, compare three distinct choices: {BUY_HOLD_LABEL} keeps "
@@ -1215,9 +1398,9 @@ def render_workbench(
               same inverse-volatility weighting. ETFs that fail receive 0%; passing
               ETFs are reweighted subject to the position limit, and any unassigned
               amount goes to analytical cash.
-            - **{VOL_FORECAST_LABEL}:** uses the TimesFM-3 median forecast only as a
-              pass/fail gate. An ETF must forecast a higher holding-period return than
-              analytical cash; passing ETFs receive the same volatility-balanced weights.
+            - **{VOL_FORECAST_LABEL}:** uses the TimesFM-3 median forecast only as an
+              eligibility gate. An ETF must forecast a higher holding-period return than
+              analytical cash; eligible ETFs receive the same volatility-balanced weights.
               Forecast magnitude never increases an ETF's weight.
             - **{EQUAL_WEIGHT_LABEL}:** gives every selected ETF the same weight and
               resets it monthly; it uses neither volatility nor trend.
@@ -1254,6 +1437,7 @@ def render_workbench(
                 None if forecast_bundle is None else forecast_bundle.manifest
             ),
             forecast_freshness=forecast_freshness,
+            comparison_labels=comparisons,
         )
     except (ValueError, ArithmeticError) as exc:
         st.warning(f"Selected range is unavailable: {exc}")
@@ -1275,13 +1459,23 @@ def render_workbench(
         ):
             st.write(
                 "TimesFM decides only whether each ETF's median forecast clears the "
-                "cash hurdle. Passing ETFs are then weighted by trailing volatility; "
+                "cash hurdle. Eligible ETFs are then weighted by trailing volatility; "
                 "a larger forecast does not earn a larger weight."
+            )
+            st.caption(
+                "The multivariate model always receives the histories of all 14 curated "
+                "ETFs together, even when you select only one ETF for allocation."
             )
             st.caption(
                 f"Signal {forecast_result.latest_signal_date.date()} · intended "
                 f"execution {forecast_result.latest_execution_date.date()} · holding "
                 f"period ends {forecast_result.latest_period_end_date.date()}"
+            )
+            st.caption(
+                f"Model generation `{forecast_result.latest_model_generation_id}` · "
+                f"model ran {forecast_freshness['latest_model_generated_at_utc']} · "
+                f"execution cutoff {forecast_freshness['latest_execution_cutoff_utc']} · "
+                "the bundle refresh timestamp is separate from model generation."
             )
             forecast_display = forecast_etfs[
                 [
@@ -1301,7 +1495,7 @@ def render_workbench(
                     "role": "Role",
                     "median_forecast_return": "Median forecast",
                     "cash_hurdle": "Cash hurdle",
-                    "forecast_status": "Decision",
+                    "forecast_status": "Eligibility",
                     "trailing_volatility": "Trailing volatility",
                     "raw_weight": "Raw risk-balanced weight",
                     "final_weight": "Research target",
@@ -1351,8 +1545,12 @@ def render_workbench(
             )
             st.markdown("#### How the forecast-filtered allocation changed")
             st.caption(
-                "These are the research targets on their actual monthly execution "
-                "dates for your selected historical range."
+                "These are the research targets on their actual monthly execution dates. "
+                + (
+                    "They use your selected historical range because Forecast is selected."
+                    if forecast_selected
+                    else "They show the complete forecast replay because Forecast is not a displayed comparison."
+                )
             )
             _allocation_chart(
                 study,
@@ -1372,6 +1570,35 @@ def render_workbench(
                 "Historical replay only · pretraining overlap unknown · no local "
                 "fine-tuning · no runtime model or network call · not investment advice."
             )
+        with st.expander("Historical TimesFM forecast checks", expanded=False):
+            st.caption(
+                "These diagnostics evaluate forecasts, not portfolio returns. Lower "
+                "return MAE, price MASE, and pinball loss are better; direction "
+                "accuracy and price "
+                "coverage should be read with the historical-replay and unknown-"
+                "pretraining-overlap caveats."
+            )
+            checks = forecast_check_summary(forecast_bundle.metrics)
+            st.dataframe(
+                checks.style.format(
+                    {
+                        "Forecasts": "{:,.0f}",
+                        "Return MAE ↓": "{:.2%}",
+                        "Period-end price MASE ↓": "{:.2f}",
+                        "Direction accuracy ↑": "{:.2%}",
+                        "Pinball loss ↓": "{:.4f}",
+                        "q10–q90 price coverage": "{:.2%}",
+                    },
+                    na_rep="—",
+                ),
+                hide_index=True,
+                width="stretch",
+            )
+            st.caption(
+                "The last-value row is a point baseline, so its direction and "
+                "probabilistic fields are intentionally blank. Historical replay is "
+                "not proof of live forecasting skill or investment value."
+            )
 
     target_options = [
         item
@@ -1381,10 +1608,18 @@ def render_workbench(
             item == VOL_FORECAST_LABEL
             and forecast_freshness["latest_target_status"] != "current"
         )
+        and not (
+            item in (VOL_BALANCED_LABEL, VOL_TREND_LABEL)
+            and standard_freshness["latest_target_status"] != "current"
+        )
     ]
     stored_target = st.session_state.get("wb_authoritative_target", VOL_TREND_LABEL)
     if stored_target not in target_options:
-        stored_target = VOL_TREND_LABEL
+        stored_target = (
+            EQUAL_WEIGHT_LABEL
+            if EQUAL_WEIGHT_LABEL in target_options
+            else target_options[0]
+        )
         if "wb_authoritative_target" in st.session_state:
             st.session_state["wb_authoritative_target"] = stored_target
     target_kwargs = (
@@ -1417,13 +1652,26 @@ def render_workbench(
             - **Latest-target status:** {target_provenance_summary(provenance)}
             - **Displayed historical results through:** {provenance['displayed_history_through']}
             - **Price artifact through:** {provenance['price_data_as_of']}
-            - **Artifact generated:** {provenance['artifact_generated_at_utc']}
+            - **Workbench data bundle refreshed:** {provenance['workbench_bundle_refreshed_at_utc']}
             - **Rule version:** `{provenance['policy_version']}`
 
             The latest proposal always uses the full validated artifact. The historical
             chart endpoint above follows your selected date range and may be earlier.
             """
         )
+        if provenance["model_generation_id"] is not None:
+            st.markdown(
+                f"""
+                - **Model generation ID:** `{provenance['model_generation_id']}`
+                - **Model generated:** {provenance['model_generated_at_utc']}
+                - **Intended execution cutoff:** {provenance['execution_cutoff_utc']}
+                - **Forecast bundle refreshed:** {provenance['forecast_bundle_refreshed_at_utc']}
+                """
+            )
+        elif provenance["execution_cutoff_utc"] is not None:
+            st.markdown(
+                f"- **Intended execution cutoff:** {provenance['execution_cutoff_utc']}"
+            )
     target_frame = latest_target_download(bundle, study, authoritative)
     target_display = target_frame[["asset", "target_weight", "asset_type"]].copy()
     target_display["asset"] = target_display["asset"].replace({CASH_ASSET: CASH_LABEL})
@@ -1469,6 +1717,12 @@ def render_workbench(
             "artifact_generated_at_utc",
             "price_data_as_of",
             "policy_version",
+            "model_generation_id",
+            "model_generated_at_utc",
+            "execution_cutoff_utc",
+            "bundle_refreshed_at_utc",
+            "workbench_bundle_refreshed_at_utc",
+            "forecast_bundle_refreshed_at_utc",
             "transaction_cost_bps",
             "current_weights",
             "target_weights",
@@ -1752,10 +2006,19 @@ def render_portfolio_lab():
             - **Approach:** {transfer['strategy']}
             - **Status:** {target_provenance_summary(transfer)}
             - **Displayed historical results through when sent:** {transfer['displayed_history_through']}
-            - **Artifact generated:** {transfer['artifact_generated_at_utc']}
+            - **Workbench data bundle refreshed:** {transfer['workbench_bundle_refreshed_at_utc']}
             - **Rule version:** `{transfer['policy_version']}`
             """
         )
+        if transfer.get("model_generation_id") is not None:
+            st.markdown(
+                f"""
+                - **Model generation ID:** `{transfer['model_generation_id']}`
+                - **Model generated:** {transfer['model_generated_at_utc']}
+                - **Intended execution cutoff:** {transfer['execution_cutoff_utc']}
+                - **Forecast bundle refreshed:** {transfer['forecast_bundle_refreshed_at_utc']}
+                """
+            )
 
     metrics = st.columns(3)
     metrics[0].metric("One-way turnover", f"{ticket.turnover:.2%}")

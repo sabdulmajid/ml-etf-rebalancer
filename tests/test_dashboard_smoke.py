@@ -14,7 +14,10 @@ from backtest.engine import CASH_ASSET
 from dashboard.workbench import (
     ALLOCATION_LABELS,
     CURRENT_MIX_LABEL,
+    EQUAL_WEIGHT_LABEL,
+    VOL_BALANCED_LABEL,
     VOL_FORECAST_LABEL,
+    VOL_TREND_LABEL,
 )
 from data.timesfm import load_timesfm_bundle
 from data.workbench import load_workbench_bundle
@@ -96,8 +99,9 @@ def test_streamlit_workbench_transfer_survives_rerun_and_uses_exact_target(
         transaction_cost_bps=transfer["transaction_cost_bps"],
     )
     assert CASH_ASSET not in set(ticket.security_orders["asset"])
-    assert transfer["execution_status"] == "pending_next_trading_close"
-    assert transfer["policy_version"] == "allocation-policy-v1"
+    assert transfer["strategy"] == EQUAL_WEIGHT_LABEL
+    assert transfer["execution_status"] == "constant_target_effective_for_analytical_ticket"
+    assert transfer["policy_version"] == "equal-weight-monthly-v1"
     bundle = load_workbench_bundle()
     library_target = generate_allocation_targets(
         bundle.adjusted_close.loc[:, selected],
@@ -181,6 +185,8 @@ def test_late_forecast_history_is_visible_but_target_is_not_transferable(monkeyp
     target = app.selectbox(key="wb_authoritative_target")
     assert VOL_FORECAST_LABEL in comparison.options
     assert VOL_FORECAST_LABEL not in target.options
+    assert VOL_BALANCED_LABEL not in target.options
+    assert VOL_TREND_LABEL not in target.options
     assert any(
         "historical research is available" in warning.value
         and "target transfer stays disabled" in warning.value
@@ -255,6 +261,12 @@ render_portfolio_lab()
     transfer = deepcopy(app.session_state["portfolio_lab_transfer"])
     assert transfer["strategy"] == VOL_FORECAST_LABEL
     assert transfer["execution_status"] == "current"
+    assert transfer["model_generation_id"] == latest_generation_id
+    assert transfer["model_generated_at_utc"] == "2026-09-01T19:00:00Z"
+    assert transfer["execution_cutoff_utc"] == "2026-09-01T20:00:00Z"
+    assert transfer["forecast_bundle_refreshed_at_utc"] == manifest[
+        "bundle_refresh"
+    ]["generated_at_utc"]
     selected = tuple(transfer["selected_etfs"])
     target = pd.Series(transfer["target_weights"], dtype=float).reindex(
         [*selected, CASH_ASSET]
@@ -278,6 +290,62 @@ render_portfolio_lab()
     )
     assert ticket.download_frame()["target_weight"].sum() == pytest.approx(1.0)
     assert CASH_ASSET not in set(ticket.security_orders["asset"])
+    assert any(
+        "Move from your current mix to the proposal" in item.value
+        for item in app.markdown
+    )
+    assert not app.exception
+
+
+def test_timely_standard_tactical_target_transfers_after_intended_close(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
+    timely_path = tmp_path / "workbench"
+    shutil.copytree(ROOT / "artifacts" / "workbench", timely_path)
+    manifest_path = timely_path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["generated_at_utc"] = "2026-09-01T19:00:00Z"
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    missing_forecast = tmp_path / "no-forecast-bundle"
+    source = f"""
+from dashboard.workbench import render_portfolio_lab, render_workbench
+render_workbench(
+    bundle_path=r{str(timely_path)!r},
+    timesfm_bundle_path=r{str(missing_forecast)!r},
+)
+render_portfolio_lab()
+"""
+    app = AppTest.from_string(source, default_timeout=30).run()
+    assert not app.exception
+    app.checkbox(key="wb_current_enabled").set_value(True).run()
+    selector = app.selectbox(key="wb_authoritative_target")
+    assert VOL_BALANCED_LABEL in selector.options
+    assert VOL_TREND_LABEL in selector.options
+    selector.set_value(VOL_TREND_LABEL).run()
+    app.button(key="wb_send_to_portfolio_lab").click().run()
+
+    transfer = deepcopy(app.session_state["portfolio_lab_transfer"])
+    assert transfer["strategy"] == VOL_TREND_LABEL
+    assert transfer["execution_status"] == "current"
+    assert transfer["execution_cutoff_utc"] == "2026-09-01T20:00:00Z"
+    assert transfer["workbench_bundle_refreshed_at_utc"] == (
+        "2026-09-01T19:00:00Z"
+    )
+    selected = tuple(transfer["selected_etfs"])
+    expected = generate_allocation_targets(
+        load_workbench_bundle(timely_path).adjusted_close.loc[:, selected],
+        selected,
+        ALLOCATION_LABELS[VOL_TREND_LABEL],
+        as_of=load_workbench_bundle(timely_path).signal_as_of,
+    ).latest_target
+    pd.testing.assert_series_equal(
+        pd.Series(transfer["target_weights"], dtype=float).reindex(
+            [*selected, CASH_ASSET]
+        ),
+        expected,
+        check_names=False,
+    )
     assert any(
         "Move from your current mix to the proposal" in item.value
         for item in app.markdown

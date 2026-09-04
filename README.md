@@ -145,13 +145,15 @@ range only changes the displayed backtest, which restarts from 100% cash. A
 valid entered Current Mix is a hypothetical constant target reset monthly, not
 a reconstruction of actual holdings history.
 
-All displayed histories align to the completed TimesFM replay periods whenever
-the forecast bundle is available, and `SPY — U.S. equity reference` uses the
-same engine, dates, costs, and cash accounting. The forecast bundle's latest
-target is transferable only while its recorded execution/holding window is
-current and the model output was produced before the execution cutoff. Missing,
-corrupt, scheduled, late, or expired forecast artifacts never disable the base
-workbench or the existing ML views.
+When the forecast comparison is selected, every displayed history aligns to its
+completed replay periods. When it is not selected, standard approaches retain
+their longer native history. `SPY — U.S. equity reference` uses the same engine,
+dates, costs, and cash accounting as the other displayed lines. Tactical latest
+targets are transferable only after they were produced before their intended
+execution close and while their holding window remains current. Their model
+generation, workbench refresh, and forecast-bundle refresh timestamps are shown
+separately. Missing, corrupt, scheduled, late, or expired forecast artifacts
+never disable the base workbench or the existing ML views.
 
 **Cash — U.S. overnight-rate proxy** uses official EFFR before April 2, 2018 and
 official SOFR from that date, with Actual/360 accrual. It is analytical and

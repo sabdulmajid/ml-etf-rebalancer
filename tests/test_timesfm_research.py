@@ -539,6 +539,12 @@ def test_freshness_disables_expired_latest_target(tmp_path, monkeypatch, workben
     )
     scheduled = bundle.freshness("2026-08-31T23:30:00Z")
     assert scheduled["latest_target_status"] == "scheduled"
+    same_day_pre_close = bundle.freshness("2026-09-01T19:30:00Z")
+    assert same_day_pre_close["latest_target_status"] == "scheduled"
+    assert "execution close" in same_day_pre_close["reason"]
+    assert bundle.freshness("2026-09-01T20:01:00Z")[
+        "latest_target_status"
+    ] == "current"
     assert bundle.freshness("2026-09-15")["latest_target_status"] == "current"
     expired = bundle.freshness("2026-10-02")
     assert expired["historical_available"] is True

@@ -1,5 +1,7 @@
 import os
 import shutil
+from copy import deepcopy
+from dataclasses import replace
 
 import numpy as np
 import pandas as pd
@@ -13,6 +15,7 @@ from dashboard.workbench import (
     DEFAULT_SELECTION,
     EQUAL_WEIGHT_LABEL,
     VOL_BALANCED_LABEL,
+    VOL_FORECAST_LABEL,
     VOL_TREND_LABEL,
     SPY_REFERENCE_LABEL,
     _format_metrics,
@@ -23,12 +26,14 @@ from dashboard.workbench import (
     bundle_fingerprint,
     clear_workbench_caches,
     current_weight_status,
+    forecast_check_summary,
     historical_download,
     holding_period_returns,
     latest_target_download,
     load_cached_bundle,
     load_cached_timesfm_bundle,
     proposed_target_summary,
+    standard_target_freshness,
     target_provenance,
     target_provenance_summary,
     ticket_action_summary,
@@ -37,9 +42,11 @@ from dashboard.workbench import (
     why_this_weight,
 )
 from data.cash import CASH_LABEL
+from data.timesfm import load_timesfm_bundle
 from data.workbench import DEFAULT_BUNDLE_PATH, load_workbench_bundle
 from data.timesfm import DEFAULT_BUNDLE_PATH as DEFAULT_TIMESFM_BUNDLE_PATH
 from portfolio.rebalance import build_rebalance_ticket
+from strategies.forecast import generate_forecast_allocation_targets
 
 
 @pytest.fixture(scope="module")
@@ -110,6 +117,125 @@ def test_committed_timesfm_bundle_is_historical_only_after_late_generation():
     assert freshness["historical_available"] is True
     assert freshness["latest_target_status"] == "disabled"
     assert "after its execution cutoff" in freshness["reason"]
+
+
+def test_standard_tactical_target_uses_intended_close_without_future_price_row(bundle):
+    study = build_workbench_study(bundle, DEFAULT_SELECTION)
+    allocation = study.allocation_results[VOL_BALANCED_LABEL]
+
+    late = standard_target_freshness(bundle, allocation, as_of="2026-09-05")
+    assert late["latest_target_status"] == "disabled"
+    assert late["latest_signal_date"] == "2026-08-31"
+    assert late["latest_execution_date"] == "2026-09-01"
+    assert late["latest_execution_cutoff_utc"] == "2026-09-01T20:00:00Z"
+    assert late["latest_period_end_date"] == "2026-10-01"
+    assert "after its intended execution close" in late["reason"]
+
+    timely_manifest = deepcopy(bundle.manifest)
+    timely_manifest["generated_at_utc"] = "2026-09-01T19:00:00Z"
+    timely_bundle = replace(bundle, manifest=timely_manifest)
+    before_close = standard_target_freshness(
+        timely_bundle, allocation, as_of="2026-09-01T19:30:00Z"
+    )
+    after_close = standard_target_freshness(
+        timely_bundle, allocation, as_of="2026-09-01T20:01:00Z"
+    )
+    assert before_close["latest_target_status"] == "scheduled"
+    assert "execution close" in before_close["reason"]
+    assert after_close["latest_target_status"] == "current"
+
+
+def test_selected_comparisons_control_forecast_history_alignment(bundle):
+    forecasts = load_timesfm_bundle()
+    forecast_result = generate_forecast_allocation_targets(
+        bundle.adjusted_close.loc[:, DEFAULT_SELECTION],
+        DEFAULT_SELECTION,
+        forecasts.signals,
+        as_of=bundle.signal_as_of,
+    )
+    native = build_workbench_study(
+        bundle,
+        DEFAULT_SELECTION,
+        forecast_result=forecast_result,
+        forecast_manifest=forecasts.manifest,
+        forecast_freshness=forecasts.freshness(as_of="2026-09-05"),
+        comparison_labels=[VOL_BALANCED_LABEL, CASH_LABEL_SHORT],
+    )
+    aligned = build_workbench_study(
+        bundle,
+        DEFAULT_SELECTION,
+        forecast_result=forecast_result,
+        forecast_manifest=forecasts.manifest,
+        forecast_freshness=forecasts.freshness(as_of="2026-09-05"),
+        comparison_labels=[VOL_BALANCED_LABEL, VOL_FORECAST_LABEL],
+    )
+
+    assert (
+        native.backtests[VOL_BALANCED_LABEL].periods.index[0]
+        < native.backtests[VOL_FORECAST_LABEL].periods.index[0]
+    )
+    assert native.backtests[CASH_LABEL_SHORT].periods.index.equals(
+        native.backtests[VOL_BALANCED_LABEL].periods.index
+    )
+    assert aligned.backtests[VOL_BALANCED_LABEL].periods.index.equals(
+        aligned.backtests[VOL_FORECAST_LABEL].periods.index
+    )
+
+
+def test_forecast_provenance_separates_model_generation_and_bundle_refresh(bundle):
+    forecasts = load_timesfm_bundle()
+    result = generate_forecast_allocation_targets(
+        bundle.adjusted_close.loc[:, DEFAULT_SELECTION],
+        DEFAULT_SELECTION,
+        forecasts.signals,
+        as_of=bundle.signal_as_of,
+    )
+    freshness = forecasts.freshness(as_of="2026-09-05")
+    study = build_workbench_study(
+        bundle,
+        DEFAULT_SELECTION,
+        forecast_result=result,
+        forecast_manifest=forecasts.manifest,
+        forecast_freshness=freshness,
+        comparison_labels=[VOL_FORECAST_LABEL, CASH_LABEL_SHORT],
+    )
+    provenance = target_provenance(bundle, study, VOL_FORECAST_LABEL)
+    generation = next(
+        item
+        for item in forecasts.manifest["model_generations"]
+        if item["id"] == result.latest_model_generation_id
+    )
+
+    assert provenance["model_generation_id"] == generation["id"]
+    assert provenance["model_generated_at_utc"] == generation["generated_at_utc"]
+    assert provenance["execution_cutoff_utc"] == freshness[
+        "latest_execution_cutoff_utc"
+    ]
+    assert provenance["workbench_bundle_refreshed_at_utc"] == bundle.manifest[
+        "generated_at_utc"
+    ]
+    assert provenance["forecast_bundle_refreshed_at_utc"] == forecasts.manifest[
+        "bundle_refresh"
+    ]["generated_at_utc"]
+    download = latest_target_download(bundle, study, VOL_FORECAST_LABEL)
+    assert "artifact_generated_at_utc" not in download.columns
+    assert download["model_generation_id"].unique().tolist() == [generation["id"]]
+
+
+def test_forecast_check_summary_is_compact_and_includes_price_mase():
+    checks = forecast_check_summary(load_timesfm_bundle().metrics)
+    assert checks.columns.tolist() == [
+        "Model",
+        "Forecasts",
+        "Return MAE ↓",
+        "Period-end price MASE ↓",
+        "Direction accuracy ↑",
+        "Pinball loss ↓",
+        "q10–q90 price coverage",
+    ]
+    assert "TimesFM-3 — all 14 ETFs together" in checks["Model"].tolist()
+    baseline = checks.loc[checks["Model"] == "Last value (point baseline)"].iloc[0]
+    assert pd.isna(baseline["Pinball loss ↓"])
 
 
 def test_freshness_policy_allows_one_month_warning_and_disables_two_or_future(bundle):
@@ -295,7 +421,44 @@ def test_explanation_has_required_semantics_and_cash_label(bundle):
     assert "100% analytical cash" in cash_reason
 
 
-def test_downloads_exactly_reconcile_displayed_results_and_targets(bundle):
+def test_forecast_explanation_status_and_all_cash_reason_reconcile(bundle):
+    forecasts = load_timesfm_bundle()
+    selected = DEFAULT_SELECTION
+    signals = forecasts.signals.copy()
+    mask = (signals["model_mode"] == "timesfm3_multivariate") & signals[
+        "ticker"
+    ].isin(selected)
+    signals.loc[mask, "forecast_edge"] = -0.01
+    signals.loc[mask, "forecast_holding_return"] = (
+        signals.loc[mask, "cash_hurdle"] - 0.01
+    )
+    result = generate_forecast_allocation_targets(
+        bundle.adjusted_close.loc[:, selected],
+        selected,
+        signals,
+        as_of=bundle.signal_as_of,
+    )
+    study = build_workbench_study(
+        bundle,
+        selected,
+        forecast_result=result,
+        forecast_manifest=forecasts.manifest,
+        forecast_freshness=forecasts.freshness(as_of="2026-09-05"),
+        comparison_labels=[VOL_FORECAST_LABEL],
+    )
+    explanation = why_this_weight(bundle, study, VOL_FORECAST_LABEL)
+    etfs = explanation.loc[explanation["asset"] != CASH_LABEL]
+    cash = explanation.loc[explanation["asset"] == CASH_LABEL].iloc[0]
+
+    assert set(etfs["forecast_status"]) == {"Held in cash"}
+    assert (etfs["final_weight"] == 0.0).all()
+    assert cash["final_weight"] == pytest.approx(1.0)
+    assert "median forecast cleared cash" in cash["reason"]
+    assert "100% analytical cash" in cash["reason"]
+
+
+def test_downloads_exactly_reconcile_displayed_results_and_targets(bundle, monkeypatch):
+    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
     study = build_workbench_study(bundle, DEFAULT_SELECTION, transaction_cost_bps=9)
     labels = [VOL_TREND_LABEL, CASH_LABEL_SHORT]
     history = historical_download(study, labels)
@@ -310,9 +473,10 @@ def test_downloads_exactly_reconcile_displayed_results_and_targets(bundle):
     assert target.loc[target["asset"] == CASH_ASSET, "asset_type"].item() == "analytical_cash"
     assert target["signal_as_of"].nunique() == 1
     assert target["execution_status"].unique().tolist() == [
-        "pending_next_trading_close"
+        "disabled"
     ]
-    assert target["artifact_generated_at_utc"].unique().tolist() == [
+    assert "artifact_generated_at_utc" not in target.columns
+    assert target["workbench_bundle_refreshed_at_utc"].unique().tolist() == [
         bundle.manifest["generated_at_utc"]
     ]
     assert target["price_data_as_of"].unique().tolist() == [
@@ -353,12 +517,16 @@ def test_downloads_exactly_reconcile_displayed_results_and_targets(bundle):
     assert plotted.index[0] != study.backtests[VOL_TREND_LABEL].periods["signal_date"].iloc[0]
 
 
-def test_target_provenance_keeps_cash_distinct_from_tactical_strategy(bundle):
+def test_target_provenance_keeps_cash_distinct_from_tactical_strategy(
+    bundle, monkeypatch
+):
+    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
     study = build_workbench_study(bundle, DEFAULT_SELECTION)
     strategy = target_provenance(bundle, study, VOL_TREND_LABEL)
     cash = target_provenance(bundle, study, CASH_LABEL_SHORT)
 
-    assert strategy["execution_status"] == "pending_next_trading_close"
+    assert strategy["execution_status"] == "disabled"
+    assert strategy["execution_cutoff_utc"] == "2026-09-01T20:00:00Z"
     assert strategy["signal_as_of"] == str(
         study.allocation_results[VOL_TREND_LABEL].latest_signal_date.date()
     )
