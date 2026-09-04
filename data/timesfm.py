@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import re
 
+import exchange_calendars as xcals
 import numpy as np
 import pandas as pd
 
@@ -99,11 +100,40 @@ class TimesFMResearchBundle:
         signal = pd.Timestamp(latest["signal_date"].iloc[0])
         execution = pd.Timestamp(latest["execution_date"].iloc[0])
         period_end = pd.Timestamp(latest["period_end_date"].iloc[0])
+        generation_ids = latest["model_generation_id"].unique().tolist()
+        if len(generation_ids) != 1:
+            raise ValueError("latest forecast has ambiguous model-generation provenance")
+        generation = next(
+            (
+                item
+                for item in self.manifest["model_generations"]
+                if item["id"] == generation_ids[0]
+            ),
+            None,
+        )
+        if generation is None:
+            raise ValueError("latest forecast has unknown model-generation provenance")
+        generation_time = pd.Timestamp(generation["generated_at_utc"])
+        if generation_time.tz is not None:
+            generation_time = generation_time.tz_convert("UTC").tz_localize(None)
+        calendar = xcals.get_calendar(
+            "XNYS",
+            start=execution - pd.Timedelta(days=7),
+            end=execution + pd.Timedelta(days=7),
+        )
+        execution_close = pd.Timestamp(calendar.session_close(execution))
+        if execution_close.tz is not None:
+            execution_close = execution_close.tz_convert("UTC").tz_localize(None)
         price_as_of = pd.Timestamp(
             self.manifest["workbench_input"]["price_data_as_of"]
         )
         if generated > as_of:
             status, reason = "disabled", "forecast artifact was generated in the future"
+        elif generation_time > execution_close:
+            status, reason = (
+                "disabled",
+                "latest forecast was generated after its execution cutoff",
+            )
         elif as_of > period_end:
             status, reason = "disabled", "latest forecast holding period has expired"
         elif as_of < execution:
@@ -117,7 +147,9 @@ class TimesFMResearchBundle:
             "price_data_as_of": str(price_as_of.date()),
             "latest_signal_date": str(signal.date()),
             "latest_execution_date": str(execution.date()),
+            "latest_execution_cutoff_utc": execution_close.isoformat() + "Z",
             "latest_period_end_date": str(period_end.date()),
+            "latest_model_generated_at_utc": generation_time.isoformat() + "Z",
         }
 
 
@@ -513,9 +545,13 @@ def validate_timesfm_bundle(path=DEFAULT_BUNDLE_PATH, verify_checksums=True, req
     return TimesFMResearchBundle(signals=signals, metrics=metrics, manifest=manifest, path=path)
 
 
-def load_timesfm_bundle(path=DEFAULT_BUNDLE_PATH, workbench_path=DEFAULT_WORKBENCH_PATH):
+def load_timesfm_bundle(
+    path=DEFAULT_BUNDLE_PATH,
+    workbench_path=DEFAULT_WORKBENCH_PATH,
+    require_clean=True,
+):
     """Load the local artifact bundle without importing TimesFM or using HTTP."""
-    bundle = validate_timesfm_bundle(path)
+    bundle = validate_timesfm_bundle(path, require_clean=require_clean)
     expected = bundle.manifest["workbench_input"]["file_sha256"]
     for filename, digest in expected.items():
         source = Path(workbench_path) / filename

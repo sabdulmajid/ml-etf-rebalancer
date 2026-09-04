@@ -27,6 +27,7 @@ from data.timesfm import (
     PIPELINE_VERSION,
     PUBLIC_FILENAMES,
     SIGNAL_COLUMNS,
+    load_timesfm_bundle,
     validate_timesfm_bundle,
 )
 from data.workbench import DEFAULT_BUNDLE_PATH as DEFAULT_WORKBENCH_PATH
@@ -468,11 +469,20 @@ def build_bundle(
     try:
         _write_bundle(staging, signals, metrics, manifest)
         validate_timesfm_bundle(staging, require_clean=not allow_dirty)
+        load_timesfm_bundle(
+            staging,
+            workbench_dir,
+            require_clean=not allow_dirty,
+        )
         _promote_directory(staging, destination)
     finally:
         if staging.exists():
             shutil.rmtree(staging)
-    return validate_timesfm_bundle(destination, require_clean=not allow_dirty)
+    return load_timesfm_bundle(
+        destination,
+        workbench_dir,
+        require_clean=not allow_dirty,
+    )
 
 
 def main():

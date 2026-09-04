@@ -544,3 +544,20 @@ def test_freshness_disables_expired_latest_target(tmp_path, monkeypatch, workben
     assert expired["historical_available"] is True
     assert expired["latest_target_status"] == "disabled"
     assert expired["reason"] == "latest forecast holding period has expired"
+
+
+def test_committed_historical_replay_is_not_mislabeled_as_live_target():
+    bundle = load_timesfm_bundle()
+    latest = bundle.latest()
+    assert latest["signal_date"].unique().tolist() == [pd.Timestamp("2026-08-31")]
+    assert latest["execution_date"].unique().tolist() == [pd.Timestamp("2026-09-01")]
+
+    freshness = bundle.freshness("2026-09-04T06:00:00Z")
+    assert freshness["historical_available"] is True
+    assert freshness["latest_target_status"] == "disabled"
+    assert freshness["reason"] == (
+        "latest forecast was generated after its execution cutoff"
+    )
+    assert pd.Timestamp(freshness["latest_model_generated_at_utc"]) > pd.Timestamp(
+        freshness["latest_execution_cutoff_utc"]
+    )
