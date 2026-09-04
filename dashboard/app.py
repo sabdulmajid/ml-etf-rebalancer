@@ -29,109 +29,97 @@ st.markdown(
     <style>
     :root {
         --ink: #17211f;
-        --muted: #63706b;
-        --paper: #f4efe4;
-        --panel: #fffaf0;
-        --panel-strong: #fbf2dd;
-        --line: rgba(23, 33, 31, 0.16);
-        --green: #0c6148;
-        --green-soft: #dcebe2;
-        --gold: #b6782f;
-        --red: #9d3d2f;
+        --muted: #68736f;
+        --canvas: #f7f7f4;
+        --surface: #ffffff;
+        --line: #d9dedb;
+        --line-strong: #afb9b4;
+        --green: #155b46;
+        --green-soft: #e9f1ed;
+        --amber: #9a632b;
+        --red: #934238;
+        --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+        --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
     }
 
     .stApp {
-        background:
-            radial-gradient(circle at 8% 4%, rgba(182, 120, 47, 0.18), transparent 26rem),
-            radial-gradient(circle at 88% 8%, rgba(12, 97, 72, 0.13), transparent 28rem),
-            linear-gradient(180deg, #f8f2e7 0%, var(--paper) 48%, #efe7d8 100%);
+        background: var(--canvas);
         color: var(--ink);
     }
 
-    h1, h2, h3 {
-        font-family: 'Newsreader', serif !important;
-        color: var(--ink);
-        letter-spacing: -0.03em;
+    .stApp, .stApp p, .stApp label, .stApp button,
+    .stApp input, .stApp textarea {
+        font-family: var(--sans);
     }
 
-    p, label, div, span {
-        font-family: 'IBM Plex Mono', monospace;
+    h1, h2, h3, h4 {
+        font-family: var(--sans) !important;
+        color: var(--ink);
+        letter-spacing: -0.025em;
+        font-weight: 650 !important;
+    }
+
+    h2 {
+        margin-top: 2.2rem !important;
+    }
+
+    [data-testid="stAppViewContainer"] > .main .block-container {
+        max-width: 1200px;
+        padding-top: 2rem;
+        padding-bottom: 5rem;
     }
 
     section[data-testid="stSidebar"] {
-        background: rgba(255, 250, 240, 0.84);
+        background: #f1f3f0;
         border-right: 1px solid var(--line);
     }
 
     .hero {
-        border: 1px solid var(--line);
-        background: rgba(255, 250, 240, 0.82);
-        border-radius: 28px;
-        padding: 2.2rem 2.4rem;
-        box-shadow: 0 24px 80px rgba(46, 35, 20, 0.10);
-        margin-bottom: 1.4rem;
-    }
-
-    .eyebrow {
-        color: var(--green);
-        font-size: 0.78rem;
-        font-weight: 600;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        margin-bottom: 0.5rem;
+        border-bottom: 1px solid var(--line-strong);
+        padding: 0.35rem 0 1.2rem;
+        margin-bottom: 0.35rem;
     }
 
     .hero-title {
-        font-family: 'Newsreader', serif !important;
-        font-size: clamp(3rem, 7vw, 6rem);
-        line-height: 0.88;
+        font-family: var(--sans) !important;
+        font-size: clamp(2rem, 4vw, 2.65rem);
+        font-weight: 650;
+        letter-spacing: -0.04em;
+        line-height: 1;
         margin: 0;
-        max-width: 850px;
+        max-width: 760px;
     }
 
     .hero-copy {
         color: var(--muted);
-        max-width: 850px;
-        line-height: 1.65;
-        font-size: 0.96rem;
-        margin-top: 1.1rem;
-    }
-
-    .pill-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.7rem;
-        margin-top: 1.4rem;
-    }
-
-    .pill {
-        background: var(--panel-strong);
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        padding: 0.55rem 0.8rem;
-        color: var(--ink);
-        font-size: 0.78rem;
+        max-width: 720px;
+        line-height: 1.55;
+        font-size: 0.95rem;
+        margin-top: 0.55rem;
     }
 
     .metric-card {
-        border: 1px solid var(--line);
-        background: rgba(255, 250, 240, 0.86);
-        border-radius: 20px;
-        padding: 1rem 1.1rem;
-        min-height: 118px;
+        border-top: 2px solid var(--line-strong);
+        background: transparent;
+        border-radius: 0;
+        padding: 0.85rem 0.25rem 0.5rem;
+        min-height: 94px;
     }
 
     .metric-label {
         color: var(--muted);
-        font-size: 0.72rem;
+        font-size: 0.7rem;
+        font-weight: 650;
         text-transform: uppercase;
-        letter-spacing: 0.10em;
-        margin-bottom: 0.5rem;
+        letter-spacing: 0.08em;
+        margin-bottom: 0.45rem;
     }
 
     .metric-value {
-        font-family: 'Newsreader', serif !important;
-        font-size: 2rem;
+        font-family: var(--sans) !important;
+        font-size: 1.8rem;
+        font-variant-numeric: tabular-nums;
+        font-weight: 550;
         color: var(--ink);
         line-height: 1;
     }
@@ -143,49 +131,107 @@ st.markdown(
     }
 
     .callout {
-        border: 1px solid rgba(12, 97, 72, 0.28);
-        background: rgba(220, 235, 226, 0.72);
-        border-radius: 18px;
-        padding: 1rem 1.1rem;
+        border-left: 2px solid var(--green);
+        background: transparent;
+        border-radius: 0;
+        padding: 0.2rem 0 0.2rem 1rem;
         color: var(--ink);
         font-size: 0.85rem;
         line-height: 1.55;
     }
 
-    .disclaimer {
-        border: 1px solid rgba(157, 61, 47, 0.30);
-        background: rgba(157, 61, 47, 0.07);
-        border-radius: 16px;
-        padding: 0.85rem 1rem;
-        color: #59322d;
-        font-size: 0.78rem;
-        line-height: 1.55;
-    }
-
     div[data-testid="stMetric"] {
-        background: rgba(255, 250, 240, 0.72);
-        border: 1px solid var(--line);
-        padding: 0.9rem 1rem;
-        border-radius: 18px;
+        background: transparent;
+        border: 0;
+        border-top: 2px solid var(--line-strong);
+        padding: 0.8rem 0.2rem 0.4rem;
+        border-radius: 0;
     }
 
     .stTabs [data-baseweb="tab-list"] {
-        gap: 0.4rem;
-        background: rgba(255, 250, 240, 0.56);
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        padding: 0.35rem;
+        gap: 1.5rem;
+        background: transparent;
+        border-bottom: 1px solid var(--line);
+        padding: 0;
     }
 
     .stTabs [data-baseweb="tab"] {
-        border-radius: 999px;
-        padding: 0.75rem 1.1rem;
+        border-radius: 0;
+        padding: 0.8rem 0 0.7rem;
         color: var(--muted);
+        font-size: 0.88rem;
+        font-weight: 550;
     }
 
     .stTabs [aria-selected="true"] {
-        background: var(--green-soft);
+        background: transparent;
         color: var(--green);
+    }
+
+    .stTabs [data-baseweb="tab-highlight"] {
+        background-color: var(--green);
+        height: 2px;
+    }
+
+    [data-testid="stAlert"] {
+        border-radius: 3px;
+        border-width: 0 0 0 3px;
+        box-shadow: none;
+    }
+
+    [data-testid="stExpander"] {
+        background: transparent;
+        border-color: var(--line);
+        border-radius: 3px;
+    }
+
+    [data-testid="stDataFrame"], [data-testid="stTable"] {
+        border: 1px solid var(--line);
+        border-radius: 3px;
+        overflow: hidden;
+    }
+
+    .stButton > button, .stDownloadButton > button {
+        border-radius: 3px;
+        box-shadow: none;
+        font-weight: 600;
+    }
+
+    [data-baseweb="select"] > div,
+    [data-testid="stNumberInput"] input,
+    [data-testid="stDateInput"] input {
+        border-radius: 3px !important;
+    }
+
+    [data-baseweb="tag"] {
+        border-radius: 2px !important;
+    }
+
+    hr {
+        border-color: var(--line) !important;
+    }
+
+    code, pre, kbd {
+        font-family: var(--mono) !important;
+    }
+
+    @media (max-width: 760px) {
+        [data-testid="stAppViewContainer"] > .main .block-container {
+            padding-top: 1rem;
+        }
+
+        .hero {
+            padding-top: 0.15rem;
+        }
+
+        .hero-title {
+            font-size: 2rem;
+        }
+
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 1rem;
+            overflow-x: auto;
+        }
     }
     </style>
     """,
@@ -273,11 +319,11 @@ def plot_equity(equity, selected):
         height=460,
         margin=dict(l=10, r=10, t=20, b=10),
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(255,250,240,0.45)",
-        font=dict(family="IBM Plex Mono", color="#17211f"),
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial, sans-serif", color="#17211f"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         xaxis=dict(showgrid=False),
-        yaxis=dict(gridcolor="rgba(23,33,31,0.12)", tickprefix="$"),
+        yaxis=dict(gridcolor="#e1e5e2", tickprefix="$", zeroline=False),
         hovermode="x unified",
     )
     st.plotly_chart(fig, width='stretch')
@@ -300,10 +346,10 @@ def plot_drawdown(drawdowns, selected):
         height=300,
         margin=dict(l=10, r=10, t=10, b=10),
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(255,250,240,0.45)",
-        font=dict(family="IBM Plex Mono", color="#17211f"),
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial, sans-serif", color="#17211f"),
         xaxis=dict(showgrid=False),
-        yaxis=dict(gridcolor="rgba(23,33,31,0.12)", tickformat=".0%"),
+        yaxis=dict(gridcolor="#e1e5e2", tickformat=".0%", zeroline=False),
         showlegend=False,
     )
     st.plotly_chart(fig, width='stretch')
@@ -327,9 +373,9 @@ def plot_allocation(allocation):
         height=430,
         margin=dict(l=10, r=50, t=10, b=10),
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(255,250,240,0.45)",
-        font=dict(family="IBM Plex Mono", color="#17211f"),
-        xaxis=dict(tickformat=".0%", gridcolor="rgba(23,33,31,0.12)", range=[0, max(0.4, alloc["weight"].max() * 1.18)]),
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial, sans-serif", color="#17211f"),
+        xaxis=dict(tickformat=".0%", gridcolor="#e1e5e2", zeroline=False, range=[0, max(0.4, alloc["weight"].max() * 1.18)]),
         yaxis=dict(showgrid=False),
         showlegend=False,
     )
@@ -351,9 +397,9 @@ def plot_feature_importance(features):
         height=420,
         margin=dict(l=10, r=20, t=10, b=10),
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(255,250,240,0.45)",
-        font=dict(family="IBM Plex Mono", color="#17211f"),
-        xaxis=dict(gridcolor="rgba(23,33,31,0.12)"),
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial, sans-serif", color="#17211f"),
+        xaxis=dict(gridcolor="#e1e5e2", zeroline=False),
         yaxis=dict(showgrid=False),
     )
     st.plotly_chart(fig, width='stretch')
@@ -450,11 +496,8 @@ sector_columns = list(manifest["universe"].keys())
 
 
 with st.sidebar:
-    st.markdown("### ML Research Controls")
-    st.caption(
-        "These controls apply only to the existing ML research tabs. They do not "
-        "change ETF Allocation Workbench results or the Portfolio Lab ticket."
-    )
+    st.markdown("### ML sector study")
+    st.caption("These controls apply only to the two ML study tabs.")
     initial_capital = st.number_input(
         "Portfolio value",
         min_value=1000,
@@ -471,13 +514,17 @@ with st.sidebar:
     if not selected:
         selected = ["ML Signal Blend"]
 
-    st.markdown("### Signal Recipe")
     signal_weights = manifest.get("signal_weights", {})
-    st.write(f"Forecast: {signal_weights.get('forecast', 0):.0%}")
-    st.write(f"Momentum: {signal_weights.get('momentum', 0):.0%}")
-    st.write(f"Stability: {signal_weights.get('stability', 0):.0%}")
-    st.write(f"Max sector: {manifest.get('max_weight', 0):.0%}")
-    st.write(f"Transaction cost: {manifest.get('transaction_cost_bps', 0):.0f} bps/trade")
+    st.markdown("#### Model settings")
+    st.caption(
+        f"Forecast {signal_weights.get('forecast', 0):.0%} · "
+        f"momentum {signal_weights.get('momentum', 0):.0%} · "
+        f"stability {signal_weights.get('stability', 0):.0%}"
+    )
+    st.caption(
+        f"Max sector {manifest.get('max_weight', 0):.0%} · "
+        f"cost {manifest.get('transaction_cost_bps', 0):.0f} bps per trade"
+    )
 
 scaled_equity = equity / float(manifest.get("initial_value", 10000)) * initial_capital
 primary = metrics.loc["ML Signal Blend"]
@@ -486,17 +533,10 @@ primary_final = scaled_equity["ML Signal Blend"].iloc[-1]
 st.markdown(
     f"""
     <div class="hero">
-        <div class="eyebrow">Transparent ETF portfolio research</div>
         <h1 class="hero-title">ETF Research Studio</h1>
         <div class="hero-copy">
-            Build and compare ETF portfolios. Review a TimesFM-3 one-month forecast analysis.
-            Explore a separate monthly machine-learning sector study. Then turn a selected
-            portfolio target into a clear rebalance plan.
-        </div>
-        <div class="pill-row">
-            <div class="pill">14-ETF Allocation Workbench</div>
-            <div class="pill">TimesFM-3 Forecast Analysis</div>
-            <div class="pill">ML Sector Study through {manifest["data_end"]}</div>
+            Compare allocation rules and forecasts, inspect current targets, and build a
+            clear rebalance plan.
         </div>
     </div>
     """,
@@ -595,10 +635,6 @@ with tab_backtest:
 
 with tab_lab:
     render_portfolio_lab()
-    st.caption(
-        "The ML Signal Explorer is in ML Research Notes. It changes its own chart "
-        "only and stays separate from this portfolio target and ticket."
-    )
 
 
 with tab_research:
@@ -701,8 +737,9 @@ with tab_research:
         height=360,
         margin=dict(l=10, r=50, t=10, b=10),
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(255,250,240,0.45)",
-        xaxis=dict(tickformat=".0%"),
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial, sans-serif", color="#17211f"),
+        xaxis=dict(tickformat=".0%", gridcolor="#e1e5e2", zeroline=False),
         yaxis=dict(showgrid=False),
         showlegend=False,
     )

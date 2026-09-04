@@ -72,6 +72,28 @@ CURRENT_MIX_LABEL = "Current Mix — monthly rebalanced"
 SPY_REFERENCE_LABEL = "SPY — U.S. equity reference"
 DEFAULT_SELECTION = ("SPY", "IEF", "GLD")
 
+CHART_COLORS = {
+    VOL_BALANCED_LABEL: "#315f78",
+    VOL_TREND_LABEL: "#9a632b",
+    VOL_FORECAST_LABEL: "#155b46",
+    EQUAL_WEIGHT_LABEL: "#6d7773",
+    CASH_LABEL_SHORT: "#b28b52",
+    BUY_HOLD_LABEL: "#2b3431",
+    CURRENT_MIX_LABEL: "#765b75",
+    SPY_REFERENCE_LABEL: "#2b3431",
+}
+ALLOCATION_COLORS = (
+    "#155b46",
+    "#315f78",
+    "#9a632b",
+    "#765b75",
+    "#6d7773",
+    "#8a6f4a",
+    "#54766f",
+    "#52667a",
+    "#b28b52",
+)
+
 ALLOCATION_LABELS = {
     VOL_BALANCED_LABEL: VOLATILITY_BALANCED,
     VOL_TREND_LABEL: VOLATILITY_BALANCED_TREND,
@@ -1168,6 +1190,10 @@ def _line_chart(study, labels, column, title, percent=False):
                 y=y,
                 mode="lines",
                 name=label,
+                line=dict(
+                    color=CHART_COLORS.get(label, "#6d7773"),
+                    width=2.5 if label in (VOL_FORECAST_LABEL, VOL_TREND_LABEL) else 1.8,
+                ),
                 hovertemplate=(
                     "%{x|%b %Y}<br>%{y:.1%}<extra>%{fullData.name}</extra>"
                     if percent
@@ -1176,13 +1202,21 @@ def _line_chart(study, labels, column, title, percent=False):
             )
         )
     figure.update_layout(
-        title=title,
         height=390 if not percent else 280,
         margin=dict(l=10, r=10, t=45, b=10),
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(255,250,240,0.45)",
-        legend=dict(orientation="h"),
-        yaxis=dict(tickformat=".0%" if percent else ",.2f"),
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial, sans-serif", color="#17211f"),
+        title=dict(text=title, x=0, xanchor="left"),
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+        ),
+        xaxis=dict(showgrid=False, zeroline=False),
+        yaxis=dict(
+            tickformat=".0%" if percent else ",.2f",
+            gridcolor="#e1e5e2",
+            zeroline=False,
+        ),
         hovermode="x unified",
     )
     st.plotly_chart(figure, width="stretch")
@@ -1227,9 +1261,11 @@ def _forecast_replay_chart(replay, ticker):
         height=360,
         margin=dict(l=10, r=10, t=50, b=10),
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(255,250,240,0.45)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial, sans-serif", color="#17211f"),
         legend=dict(orientation="h", y=1.12),
-        yaxis=dict(tickformat="+.0%"),
+        xaxis=dict(showgrid=False, zeroline=False),
+        yaxis=dict(tickformat="+.0%", gridcolor="#e1e5e2", zeroline=False),
         hovermode="x unified",
     )
     st.plotly_chart(figure, width="stretch", key=f"wb_forecast_replay_{ticker}")
@@ -1238,7 +1274,7 @@ def _forecast_replay_chart(replay, ticker):
 def _allocation_chart(study, label, *, key):
     allocations = allocation_chart_data(study, label)
     figure = go.Figure()
-    for asset in allocations.columns:
+    for position, asset in enumerate(allocations.columns):
         display = CASH_LABEL if asset == CASH_ASSET else asset
         figure.add_trace(
             go.Scatter(
@@ -1247,6 +1283,10 @@ def _allocation_chart(study, label, *, key):
                 mode="lines",
                 name=display,
                 stackgroup="allocation",
+                line=dict(
+                    color=ALLOCATION_COLORS[position % len(ALLOCATION_COLORS)],
+                    width=0.8,
+                ),
                 hovertemplate="%{x|%b %Y}<br>%{y:.1%}<extra>%{fullData.name}</extra>",
             )
         )
@@ -1254,9 +1294,13 @@ def _allocation_chart(study, label, *, key):
         height=330,
         margin=dict(l=10, r=10, t=20, b=10),
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(255,250,240,0.45)",
-        legend=dict(orientation="h"),
-        yaxis=dict(tickformat=".0%", range=[0, 1]),
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial, sans-serif", color="#17211f"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        xaxis=dict(showgrid=False, zeroline=False),
+        yaxis=dict(
+            tickformat=".0%", range=[0, 1], gridcolor="#e1e5e2", zeroline=False
+        ),
         hovermode="x unified",
     )
     st.plotly_chart(figure, width="stretch", key=key)
@@ -1304,10 +1348,8 @@ def _current_editor(selected):
         return None, None
 
     st.caption(
-        "Enter the portfolio you hold now, including cash. Values are used exactly "
-        "as entered—they are not normalized and do not change strategy results. "
-        "They only add Current Mix and enable the Portfolio Lab ticket. Removed ETF "
-        "weight moves to cash; a newly selected ETF starts at 0%."
+        "Enter the portfolio you hold now, including cash. The values must total "
+        "100% and are never normalized."
     )
     columns = st.columns(min(4, len(selected) + 1))
     edited = {}
@@ -1364,15 +1406,9 @@ def proposed_target_summary(target):
     total = float(values.sum())
     funded = values.drop(labels=[CASH_ASSET], errors="ignore")
     funded = funded[funded > WEIGHT_TOLERANCE].sort_values(ascending=False)
-    if funded.empty:
-        allocation_text = "No ETF receives weight."
-    else:
-        allocation_text = "ETF weights: " + ", ".join(
-            f"{asset} {weight:.2%}" for asset, weight in funded.items()
-        ) + "."
     return (
-        f"This proposal allocates {etf_weight:.2%} to ETFs and {cash_weight:.2%} "
-        f"to analytical cash ({total:.2%} total). {allocation_text}"
+        f"{len(funded)} ETF{'s' if len(funded) != 1 else ''} funded · "
+        f"ETFs {etf_weight:.2%} · Cash {cash_weight:.2%} · {total:.2%} total"
     )
 
 
@@ -1421,17 +1457,9 @@ def render_workbench(
 ):
     """Render the isolated first-tab workbench and populate Portfolio Lab state."""
     st.markdown("## ETF Allocation Workbench")
-    st.write(
-        "Select ETFs, compare portfolio rules, review the latest weights, and create "
-        "a rebalance plan from your current portfolio."
-    )
-    guide = st.columns(3)
-    guide[0].info("**1 · Choose ETFs**\n\nSelect one to eight investments to study.")
-    guide[1].info(
-        "**2 · Compare portfolios**\n\nReview each rule on the same dates and costs."
-    )
-    guide[2].info(
-        "**3 · Build a rebalance plan**\n\nEnter current weights, then send one target to Portfolio Lab."
+    st.caption(
+        "Choose up to eight ETFs. Compare allocation rules on the same history, "
+        "then use one current target to build a rebalance plan."
     )
     try:
         bundle = load_cached_bundle(bundle_path)
@@ -1444,20 +1472,22 @@ def render_workbench(
 
     freshness = bundle.freshness(as_of=_test_as_of())
     st.caption(
-        f"Validated local data · ETF prices through {bundle.manifest['price_data_as_of']} "
-        f"· overnight cash rates through {bundle.manifest['cash_rate_as_of']}"
+        f"Data through {bundle.manifest['last_complete_month']} · "
+        f"status: {freshness['status']}"
     )
-    with st.expander("Data status and methodology dates", expanded=False):
-        status_columns = st.columns(4)
-        status_columns[0].metric("Bundle status", freshness["status"].title())
-        status_columns[1].metric(
-            "ETF prices through", bundle.manifest["price_data_as_of"]
-        )
-        status_columns[2].metric(
-            "Cash rates through", bundle.manifest["cash_rate_as_of"]
-        )
-        status_columns[3].metric(
-            "Latest complete month", bundle.manifest["last_complete_month"]
+    with st.expander("Data details", expanded=False):
+        st.markdown(
+            f"""
+            | Dataset | Latest observation |
+            |:--|:--|
+            | Adjusted ETF prices | {bundle.manifest['price_data_as_of']} |
+            | U.S. overnight cash rates | {bundle.manifest['cash_rate_as_of']} |
+            | Latest complete month | {bundle.manifest['last_complete_month']} |
+
+            **{CASH_LABEL}** uses official EFFR before 2018-04-02 and official
+            SOFR from 2018-04-02. It is an analytical balance, not a tradeable
+            security. BIL remains a separately selectable ETF.
+            """
         )
     if freshness["status"] == "warning":
         st.warning(f"Workbench data warning: {freshness['reason']}.")
@@ -1492,7 +1522,7 @@ def render_workbench(
         for row in bundle.instruments.itertuples(index=False)
     }
     selected = st.multiselect(
-        "Curated ETFs (select 1–8)",
+        "ETFs (select up to 8)",
         options=list(bundle.tickers),
         default=list(DEFAULT_SELECTION),
         max_selections=8,
@@ -1514,7 +1544,7 @@ def render_workbench(
 
     controls = st.columns(2)
     transaction_cost_bps = controls[0].number_input(
-        "Transaction cost (bps)",
+        "Estimated trading cost (bps)",
         min_value=0.0,
         max_value=100.0,
         value=5.0,
@@ -1569,14 +1599,11 @@ def render_workbench(
     ):
         unavailable_tactical.append("TimesFM")
     if unavailable_tactical:
-        st.info(
-            "The latest "
+        st.caption(
+            "Latest target status: "
             + " and ".join(unavailable_tactical)
-            + " tactical target"
-            + ("s are" if len(unavailable_tactical) > 1 else " is")
-            + " outside the current rebalance window. Historical charts and target "
-            "downloads remain available. Portfolio Lab accepts current signals and "
-            "fixed portfolios."
+            + (" targets are" if len(unavailable_tactical) > 1 else " target is")
+            + " outside the current rebalance window. Historical results remain available."
         )
 
     options = available_comparisons(
@@ -1607,7 +1634,7 @@ def render_workbench(
         {} if comparison_widget_key in st.session_state else {"default": stored}
     )
     comparisons = st.multiselect(
-        "Comparison series",
+        "Portfolios to compare",
         options=options,
         format_func=comparison_selector_label,
         key=comparison_widget_key,
@@ -1655,34 +1682,13 @@ def render_workbench(
         else "The standard approaches use their full common history."
     )
     st.caption(
-        "Each selected range starts at $1 in cash. The first ETF purchase counts as "
-        "turnover and has a transaction cost. The date range changes the chart only; "
-        "it does not change the latest target. "
+        "History restarts at $1 with entry costs. Changing the range does not change "
+        "the latest target. "
         + alignment_text
     )
-    if len(selected) == 1:
-        st.info(
-            f"With one ETF, compare three distinct choices: {BUY_HOLD_LABEL} keeps "
-            f"holding the ETF, the filtered approaches switch between that ETF and "
-            f"cash, and {CASH_LABEL_SHORT} stays in analytical cash. Duplicate fully "
-            "invested lines are hidden."
-        )
-    if current_valid:
-        st.caption(
-            "Current Mix is a hypothetical constant target reset at every monthly "
-            "rebalance; it is not a reconstruction of actual holdings history. To "
-            "plot the weights you entered, add Current Mix — monthly rebalanced under "
-            "Comparison series."
-        )
     cap = position_cap(len(selected))
     equal_share = 1.0 / len(selected)
-    st.caption(
-        f"{VOL_BALANCED_LABEL} favors steadier ETFs. {VOL_TREND_LABEL} uses the "
-        "same method but gives 0% to ETFs below their long-term trend. Passing "
-        "ETFs are reweighted within the position limit, and any amount that cannot "
-        "be assigned goes to analytical cash. The other lines are reference portfolios."
-    )
-    with st.expander("Portfolio rule summary"):
+    with st.expander("How the portfolio rules work"):
         st.markdown(
             f"""
             - **{VOL_BALANCED_LABEL}:** Lower-volatility ETFs receive more weight.
@@ -1699,6 +1705,16 @@ def render_workbench(
               equal weight is {equal_share:.1%} and the maximum ETF weight is {cap:.1%}.
             """
         )
+        if len(selected) == 1:
+            st.caption(
+                "With one ETF, the filtered approaches switch between that ETF and "
+                "cash. Duplicate fully invested comparisons are hidden."
+            )
+        if current_valid:
+            st.caption(
+                "Current Mix resets your entered weights monthly for comparison. It "
+                "does not reconstruct your actual transaction history."
+            )
         st.markdown(
             "[Read the formulas, timing, cash method, and metric definitions]"
             "(https://github.com/sabdulmajid/ml-etf-rebalancer/blob/master/"
@@ -1725,7 +1741,18 @@ def render_workbench(
         st.warning(f"Selected range is unavailable: {exc}")
         return None
 
+    show_forecast_detail = False
     if forecast_result is not None:
+        show_forecast_detail = st.toggle(
+            "Inspect TimesFM-3 forecast research",
+            value=False,
+            key="wb_show_forecast_detail",
+            help=(
+                "Open the model evaluation, latest ETF forecasts, and completed "
+                "forecast replay."
+            ),
+        )
+    if forecast_result is not None and show_forecast_detail:
         latest_forecast = why_this_weight(bundle, study, VOL_FORECAST_LABEL)
         forecast_etfs = latest_forecast.loc[
             latest_forecast["asset"] != CASH_LABEL
@@ -1811,7 +1838,7 @@ def render_workbench(
             )
         else:
             st.info(
-                "Select Forecast under Comparison series to add its portfolio results "
+                "Select Forecast under Portfolios to compare to add its portfolio results "
                 "for the chosen dates."
             )
 
@@ -2038,6 +2065,8 @@ def render_workbench(
             "index": target_options.index(stored_target)
         }
     )
+    st.divider()
+    st.markdown("## Current proposal")
     authoritative = st.selectbox(
         "Choose a proposed portfolio",
         options=target_options,
@@ -2051,8 +2080,8 @@ def render_workbench(
         "current",
         "constant_target_effective_for_analytical_ticket",
     }
-    st.markdown("### Latest target snapshot")
-    st.write(proposed_target_summary(target))
+    st.markdown("### Target weights")
+    st.caption(proposed_target_summary(target))
     st.caption(target_provenance_summary(provenance))
     if not target_transferable:
         st.warning(
@@ -2171,16 +2200,15 @@ def render_workbench(
             ),
         )
         if current_valid:
-            st.info(
+            st.caption(
                 "Next step: choose a current or constant target if you want a ticket. "
                 "This historical-only target remains available for analysis and download."
             )
         elif current_error:
-            st.info("Next step: adjust the current-weight total to exactly 100%.")
+            st.caption("Next step: adjust the current-weight total to exactly 100%.")
         else:
-            st.info(
-                "Next step: turn on ‘Enter current weights,’ include cash, and make "
-                "the total exactly 100%."
+            st.caption(
+                "To build a ticket, enter current weights—including cash—that total 100%."
             )
 
     st.markdown("### Why each asset has this weight")
@@ -2258,15 +2286,20 @@ def render_workbench(
     metrics = _format_metrics(study, comparisons)
     st.markdown("### Results at a glance")
     st.caption(
-        "Arrows show the generally preferred direction, not a guarantee of quality. "
-        "Return, volatility, turnover, and cost drag are annualized. One-way turnover "
-        "measures how much of the portfolio is replaced; cost drag is the annualized "
-        "difference between gross and after-cost performance. For drawdown and the "
-        "worst month, a result closer to 0% is less severe. A dash means the metric "
-        "cannot be calculated for the selected history."
+        "Sharpe measures return above cash relative to variability. Drawdown shows the "
+        "largest peak-to-trough loss. Turnover and cost drag show how much trading the "
+        "approach required."
     )
+    performance_columns = [
+        "Annualized return ↑",
+        "Annualized volatility ↓",
+        "Sharpe above cash ↑",
+        "Maximum drawdown ↑",
+        "Return / drawdown ↑",
+        "Worst month ↑",
+    ]
     st.dataframe(
-        metrics.style.format(
+        metrics[performance_columns].style.format(
             {
                 "Annualized return ↑": "{:.2%}",
                 "Annualized volatility ↓": "{:.2%}",
@@ -2274,6 +2307,20 @@ def render_workbench(
                 "Maximum drawdown ↑": "{:.2%}",
                 "Return / drawdown ↑": "{:.2f}",
                 "Worst month ↑": "{:.2%}",
+            },
+            na_rep="—",
+        ),
+        width="stretch",
+    )
+    st.markdown("#### Trading impact")
+    st.dataframe(
+        metrics[
+            [
+                "Annualized one-way turnover ↓",
+                "Annualized cost drag ↓",
+            ]
+        ].style.format(
+            {
                 "Annualized one-way turnover ↓": "{:.2%}",
                 "Annualized cost drag ↓": "{:.2%}",
             },
@@ -2284,8 +2331,7 @@ def render_workbench(
 
     st.markdown("### How the proposed allocation changed")
     st.caption(
-        "Weights are plotted on rebalance (execution) dates. The table separates "
-        "the earlier signal date, rebalance date, and end of the resulting holding period."
+        "Monthly weights on each rebalance date. The table shows the last 24 decisions."
     )
     _allocation_chart(
         study,
@@ -2309,13 +2355,14 @@ def render_workbench(
         "One-way turnover",
         "Estimated cost rate at rebalance",
     ]
-    st.dataframe(
-        allocation_history.tail(24).style.format(
-            {column: "{:.2%}" for column in percentage_columns}
-        ),
-        hide_index=True,
-        width="stretch",
-    )
+    with st.expander("View monthly allocation data"):
+        st.dataframe(
+            allocation_history.tail(24).style.format(
+                {column: "{:.2%}" for column in percentage_columns}
+            ),
+            hide_index=True,
+            width="stretch",
+        )
 
     downloads = st.columns(3)
     downloads[0].download_button(
@@ -2340,12 +2387,6 @@ def render_workbench(
         key="wb_allocation_download",
     )
 
-    st.markdown(
-        f"**{CASH_LABEL}** uses official EFFR before 2018-04-02 and official "
-        "SOFR from 2018-04-02. It is an analytical, non-investable series. BIL "
-        "remains a separately selectable ETF; analytical cash is never a ticker "
-        "or security order."
-    )
     return study
 
 
@@ -2355,9 +2396,8 @@ def render_portfolio_lab():
     transfer = st.session_state.get("portfolio_lab_transfer")
     if not transfer:
         st.info(
-            "No proposal has been sent yet. In ETF Allocation Workbench: (1) choose "
-            "ETFs, (2) turn on Enter current weights and make the total exactly 100%, "
-            "and (3) choose a proposed portfolio and select Send to Portfolio Lab."
+            "No proposal selected. In ETF Allocation Workbench, enter current weights "
+            "that total 100%, then send a proposed portfolio here."
         )
         return
 

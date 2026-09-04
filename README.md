@@ -35,7 +35,7 @@ together before, during, and after the 2020 market decline.
 1. Open **ETF Allocation Workbench**.
 2. Select `SPY`, `IEF`, and `GLD`.
 3. Select **Forecast filter**, **Trend filter**, **Equal Weight**, and
-   **SPY reference** under Comparison series.
+   **SPY reference** under Portfolios to compare.
 4. Set the historical range to **January 2019 through December 2021**.
 5. Keep the transaction-cost setting fixed so every portfolio uses the same cost.
 6. Use **Growth of $1 after estimated costs** to compare the value of each
