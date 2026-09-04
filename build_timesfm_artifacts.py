@@ -40,6 +40,7 @@ from forecasting.timesfm import (
     MODEL_MODES,
     MULTIVARIATE_MODE,
     QUANTILE_LEVELS,
+    TIMESFM_SOURCE_REVISION,
     UNIVARIATE_MODE,
     TimesFM3Runner,
     build_forecast_windows,
@@ -366,7 +367,11 @@ def build_bundle(
         "artifact_kind": "timesfm3-zero-shot-research",
         "publication_allowed": True,
         "model_execution_status": "complete",
-        "checkpoint": {"id": CHECKPOINT_ID, "revision": CHECKPOINT_REVISION},
+        "checkpoint": {
+            "id": CHECKPOINT_ID,
+            "revision": CHECKPOINT_REVISION,
+            "timesfm_source_revision": TIMESFM_SOURCE_REVISION,
+        },
         "configuration": {
             "context_sessions": CONTEXT_SESSIONS,
             "universe_mode": "all-14-etfs-jointly",

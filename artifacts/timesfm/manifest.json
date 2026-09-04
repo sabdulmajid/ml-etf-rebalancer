@@ -6,7 +6,8 @@
   "model_execution_status": "complete",
   "checkpoint": {
     "id": "google/timesfm-3.0-pytorch",
-    "revision": "43046b85ec22d584a13f8098c2ed39c889e129c2"
+    "revision": "43046b85ec22d584a13f8098c2ed39c889e129c2",
+    "timesfm_source_revision": "aa480150652811e732d87a3c5344b235234104e3"
   },
   "configuration": {
     "context_sessions": 512,

@@ -16,6 +16,7 @@ from data.workbench import xnys_sessions
 
 CHECKPOINT_ID = "google/timesfm-3.0-pytorch"
 CHECKPOINT_REVISION = "43046b85ec22d584a13f8098c2ed39c889e129c2"
+TIMESFM_SOURCE_REVISION = "aa480150652811e732d87a3c5344b235234104e3"
 CONTEXT_SESSIONS = 512
 QUANTILE_LEVELS = tuple(value / 10.0 for value in range(1, 10))
 LAST_VALUE_MODE = "last_value"

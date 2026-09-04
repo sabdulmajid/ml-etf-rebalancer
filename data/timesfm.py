@@ -22,6 +22,7 @@ from forecasting.timesfm import (
     MODEL_MODES,
     MULTIVARIATE_MODE,
     QUANTILE_LEVELS,
+    TIMESFM_SOURCE_REVISION,
 )
 
 
@@ -125,6 +126,7 @@ def _validate_manifest(manifest, require_clean):
     if manifest["checkpoint"] != {
         "id": CHECKPOINT_ID,
         "revision": CHECKPOINT_REVISION,
+        "timesfm_source_revision": TIMESFM_SOURCE_REVISION,
     }:
         raise ValueError("TimesFM checkpoint identity or revision changed")
     configuration = manifest["configuration"]
