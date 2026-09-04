@@ -60,23 +60,23 @@
   ],
   "workbench_input": {
     "schema_version": "workbench-bundle-v1",
-    "price_data_as_of": "2026-07-31",
-    "last_complete_month": "2026-07-31",
+    "price_data_as_of": "2026-08-31",
+    "last_complete_month": "2026-08-31",
     "file_sha256": {
-      "adjusted_close.csv": "a297a98f115bd65de4b41ce2bd004439d0f0341f8e0cbcb854d6d91ae1c39e88",
-      "cash_index.csv": "0f7b230ca493710830a794038714e6fad4598c8b3944a479a20876e20fc62e17",
-      "instruments.csv": "8a385dde603a68c155a7fb96edbbce646bece6bbaaeeb500879db28370261754",
-      "manifest.json": "0dfa549f34ca6a579f6702ff4f6f24be45c4fcde776704e5899cd52fdd89f3cc"
+      "adjusted_close.csv": "9cd999fd4cceebc8b32782ade29b63f0185e74f54cab73b03fea90affda29a73",
+      "cash_index.csv": "b9ba5141a44dd56bb686b0b67f303e545a92c275bc2cd9504ca7c8122ba9fa51",
+      "instruments.csv": "b03c6f41368cef640e07927159aa88ea24225015097f80ae043d1d6fee2fc101",
+      "manifest.json": "9c63c1198dc62ffe24b2a76c3911f728ce7df42bac6f52b032e3aa7fdaa162be"
     }
   },
   "forecast_signal_start": "2009-06-30",
-  "forecast_signal_end": "2026-07-31",
+  "forecast_signal_end": "2026-08-31",
   "pipeline_version": "timesfm-artifact-builder-v2",
   "model_generations": [
     {
-      "id": "timesfm3-20260904T045550Z-7520fa6",
-      "generated_at_utc": "2026-09-04T04:55:50.413716Z",
-      "git_sha": "7520fa6b2b482cabf8a7ffd5d0422a110c231367",
+      "id": "timesfm3-20260904T053630Z-e8512d77",
+      "generated_at_utc": "2026-09-04T05:36:30.250688Z",
+      "git_sha": "e8512d777770fbda8aff30ddc0844821dcc194e4",
       "git_dirty_at_build": false,
       "dependency_versions": {
         "numpy": "2.2.6",
@@ -89,43 +89,43 @@
       },
       "runtime": {
         "device": "cpu",
-        "builder_peak_rss_kb": 2915180
+        "builder_peak_rss_kb": 2904948
       },
       "model_policy_sha256": "faed84a2ddc391e4b957c6686ea115e9465896d2bf31a9d85ac07743b4f17efd",
       "performance": {
         "timesfm3_multivariate": {
-          "forecast_origins": 206,
-          "total_inference_seconds": 265.8876891020045,
-          "median_inference_seconds": 1.21723553699849,
-          "maximum_inference_seconds": 1.97249365200696
+          "forecast_origins": 207,
+          "total_inference_seconds": 242.2767662598635,
+          "median_inference_seconds": 1.1450763660104712,
+          "maximum_inference_seconds": 1.7802816750045167
         },
         "timesfm3_univariate": {
-          "forecast_origins": 206,
-          "total_inference_seconds": 305.2053126630634,
-          "median_inference_seconds": 1.41622044350515,
-          "maximum_inference_seconds": 2.07102563499939
+          "forecast_origins": 207,
+          "total_inference_seconds": 286.13205309104524,
+          "median_inference_seconds": 1.3606516709987773,
+          "maximum_inference_seconds": 1.9533976179955062
         }
       }
     }
   ],
   "bundle_refresh": {
-    "generated_at_utc": "2026-09-04T05:25:28.469139Z",
-    "git_sha": "388262315b4cfb0e354f6b46f4db2cfebc62b1ac",
+    "generated_at_utc": "2026-09-04T05:36:30.250688Z",
+    "git_sha": "e8512d777770fbda8aff30ddc0844821dcc194e4",
     "git_dirty_at_build": false,
-    "mode": "incremental",
-    "reused_mode_signal_groups": 618,
-    "generated_baseline_groups": 0,
-    "generated_model_groups": 0
+    "mode": "full",
+    "reused_mode_signal_groups": 0,
+    "generated_baseline_groups": 207,
+    "generated_model_groups": 414
   },
   "evaluation_classification": "historical_replay",
   "pretraining_overlap": "unknown",
   "validation_status": "passed",
   "row_counts": {
-    "forecast_signals.csv": 8652,
+    "forecast_signals.csv": 8694,
     "forecast_metrics.csv": 45
   },
   "file_sha256": {
-    "forecast_signals.csv": "b613faffcb201cdb250b2fd8111ac11e1afb7e7aa1086ec063eb8d99cac8adbe",
-    "forecast_metrics.csv": "e2d715f94d3daa5a6d00a5e06a9fe92102254b6b99544b8c734e74e62a36939f"
+    "forecast_signals.csv": "470d3afe41ef683fdb03b1561bcf9179a0760975b9d24ec9a062b48245286f52",
+    "forecast_metrics.csv": "cc020bf7d0b4989d3fbf3ee26198297a8d4c370a75fd15d14a8065134bf0dc4a"
   }
 }
