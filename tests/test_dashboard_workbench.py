@@ -28,6 +28,7 @@ from dashboard.workbench import (
     comparison_selector_label,
     current_weight_status,
     forecast_check_summary,
+    forecast_checks_for_display,
     historical_download,
     holding_period_returns,
     latest_target_download,
@@ -246,6 +247,14 @@ def test_forecast_check_summary_is_compact_and_includes_price_mase():
     assert "TimesFM-3 — all 14 ETFs together" in checks["Model"].tolist()
     baseline = checks.loc[checks["Model"] == "Last value (point baseline)"].iloc[0]
     assert pd.isna(baseline["Pinball loss ↓"])
+    display = forecast_checks_for_display(checks)
+    display_baseline = display.loc[
+        display["Model"] == "Last value (point baseline)"
+    ].iloc[0]
+    assert display_baseline["Direction accuracy ↑"] == "—"
+    assert display_baseline["Pinball loss ↓"] == "—"
+    assert display_baseline["q10–q90 price coverage"] == "—"
+    assert not display.map(lambda value: value is None).any().any()
 
 
 def test_freshness_policy_allows_one_month_warning_and_disables_two_or_future(bundle):
@@ -386,8 +395,8 @@ def test_every_comparison_has_a_distinct_compact_selector_label():
     assert len(labels) == len(set(labels))
     assert dict(zip(options, labels, strict=True)) == {
         VOL_BALANCED_LABEL: "Balanced",
-        VOL_TREND_LABEL: "Balanced + Trend",
-        VOL_FORECAST_LABEL: "Balanced + Forecast",
+        VOL_TREND_LABEL: "Trend filter",
+        VOL_FORECAST_LABEL: "Forecast filter",
         EQUAL_WEIGHT_LABEL: "Equal Weight",
         CASH_LABEL_SHORT: "Cash",
         SPY_REFERENCE_LABEL: "SPY reference",

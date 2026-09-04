@@ -79,8 +79,8 @@ ALLOCATION_LABELS = {
 
 COMPARISON_SELECTOR_LABELS = {
     VOL_BALANCED_LABEL: "Balanced",
-    VOL_TREND_LABEL: "Balanced + Trend",
-    VOL_FORECAST_LABEL: "Balanced + Forecast",
+    VOL_TREND_LABEL: "Trend filter",
+    VOL_FORECAST_LABEL: "Forecast filter",
     EQUAL_WEIGHT_LABEL: "Equal Weight",
     CASH_LABEL_SHORT: "Cash",
     SPY_REFERENCE_LABEL: "SPY reference",
@@ -939,6 +939,32 @@ def forecast_check_summary(metrics):
     )
 
 
+def forecast_checks_for_display(checks):
+    """Format a numeric forecast-check summary with explicit unavailable marks."""
+    formats = {
+        "Model": None,
+        "Forecasts": "{:,.0f}",
+        "Return MAE ↓": "{:.2%}",
+        "Period-end price MASE ↓": "{:.2f}",
+        "Direction accuracy ↑": "{:.2%}",
+        "Pinball loss ↓": "{:.4f}",
+        "q10–q90 price coverage": "{:.2%}",
+    }
+    if list(checks.columns) != list(formats):
+        raise ValueError("forecast-check display received unexpected columns")
+    display = checks.copy()
+    for column, template in formats.items():
+        if template is None:
+            display[column] = display[column].astype(str)
+        else:
+            display[column] = display[column].map(
+                lambda value, pattern=template: (
+                    "—" if pd.isna(value) else pattern.format(value)
+                )
+            )
+    return display
+
+
 def _line_chart(study, labels, column, title, percent=False):
     figure = go.Figure()
     for label in labels:
@@ -1604,17 +1630,7 @@ def render_workbench(
             )
             checks = forecast_check_summary(forecast_bundle.metrics)
             st.dataframe(
-                checks.style.format(
-                    {
-                        "Forecasts": "{:,.0f}",
-                        "Return MAE ↓": "{:.2%}",
-                        "Period-end price MASE ↓": "{:.2f}",
-                        "Direction accuracy ↑": "{:.2%}",
-                        "Pinball loss ↓": "{:.4f}",
-                        "q10–q90 price coverage": "{:.2%}",
-                    },
-                    na_rep="—",
-                ),
+                forecast_checks_for_display(checks),
                 hide_index=True,
                 width="stretch",
             )

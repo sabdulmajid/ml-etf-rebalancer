@@ -199,6 +199,14 @@ def test_late_forecast_history_is_visible_but_target_is_not_transferable(monkeyp
         "historical research only" in expander.label.lower()
         for expander in app.expander
     )
+    forecast_checks = next(
+        item.value
+        for item in app.dataframe
+        if "Pinball loss ↓" in item.value.columns
+    )
+    assert "—" in forecast_checks["Pinball loss ↓"].tolist()
+    assert not forecast_checks.map(lambda value: value is None).any().any()
+    assert not forecast_checks.astype(str).eq("None").any().any()
     assert not app.exception
 
 
