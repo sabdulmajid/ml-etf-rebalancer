@@ -109,10 +109,10 @@
     }
   ],
   "bundle_refresh": {
-    "generated_at_utc": "2026-09-04T05:24:57.747611Z",
-    "git_sha": "667e377e991d13a67c0d30e0b5b5d777126a9b42",
+    "generated_at_utc": "2026-09-04T05:25:28.469139Z",
+    "git_sha": "388262315b4cfb0e354f6b46f4db2cfebc62b1ac",
     "git_dirty_at_build": false,
-    "mode": "metadata_migration",
+    "mode": "incremental",
     "reused_mode_signal_groups": 618,
     "generated_baseline_groups": 0,
     "generated_model_groups": 0
