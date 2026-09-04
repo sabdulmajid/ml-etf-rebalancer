@@ -28,7 +28,7 @@ from dashboard.workbench import (
     comparison_selector_label,
     default_comparisons,
     forecast_portfolio_comparison,
-    forecast_portfolio_verdict,
+    forecast_portfolio_table,
     forecast_replay_frame,
     forecast_replay_summary,
     forecast_skill_snapshot,
@@ -239,27 +239,27 @@ def test_forecast_provenance_separates_model_generation_and_bundle_refresh(bundl
     assert download["model_generation_id"].unique().tolist() == [generation["id"]]
 
 
-def test_forecast_check_summary_is_compact_and_includes_price_mase():
+def test_forecast_check_summary_has_plain_labels_and_price_measure():
     checks = forecast_check_summary(load_timesfm_bundle().metrics)
     assert checks.columns.tolist() == [
         "Model",
-        "Forecasts",
-        "Return MAE ↓",
-        "Period-end price MASE ↓",
-        "Direction accuracy ↑",
-        "Pinball loss ↓",
-        "q10–q90 price coverage",
+        "Completed ETF-months",
+        "Average return difference ↓",
+        "Scaled final-price difference ↓",
+        "Correct up-or-down calls ↑",
+        "Probability forecast difference ↓",
+        "Final price inside 10%–90% range",
     ]
     assert "TimesFM-3 — all 14 ETFs together" in checks["Model"].tolist()
     baseline = checks.loc[checks["Model"] == "Last value (point baseline)"].iloc[0]
-    assert pd.isna(baseline["Pinball loss ↓"])
+    assert pd.isna(baseline["Probability forecast difference ↓"])
     display = forecast_checks_for_display(checks)
     display_baseline = display.loc[
         display["Model"] == "Last value (point baseline)"
     ].iloc[0]
-    assert display_baseline["Direction accuracy ↑"] == "—"
-    assert display_baseline["Pinball loss ↓"] == "—"
-    assert display_baseline["q10–q90 price coverage"] == "—"
+    assert display_baseline["Correct up-or-down calls ↑"] == "—"
+    assert display_baseline["Probability forecast difference ↓"] == "—"
+    assert display_baseline["Final price inside 10%–90% range"] == "—"
     assert not display.map(lambda value: value is None).any().any()
 
 
@@ -429,7 +429,7 @@ def test_default_comparisons_focus_on_forecast_and_simple_reference():
     ]
 
 
-def test_timesfm_skill_snapshot_and_replay_are_honest_and_realized_only():
+def test_timesfm_skill_snapshot_and_replay_use_realized_rows_only():
     forecasts = load_timesfm_bundle()
     snapshot = forecast_skill_snapshot(forecasts.metrics)
     replay = forecast_replay_frame(
@@ -452,7 +452,7 @@ def test_timesfm_skill_snapshot_and_replay_are_honest_and_realized_only():
     assert 0.0 <= summary["interval_80_coverage"] <= 1.0
 
 
-def test_forecast_portfolio_verdict_uses_same_range_and_plain_language(bundle):
+def test_forecast_portfolio_table_uses_same_range_and_clear_columns(bundle):
     forecasts = load_timesfm_bundle()
     result = generate_forecast_allocation_targets(
         bundle.adjusted_close.loc[:, DEFAULT_SELECTION],
@@ -471,17 +471,22 @@ def test_forecast_portfolio_verdict_uses_same_range_and_plain_language(bundle):
         end="2026-08-31",
     )
     comparison = forecast_portfolio_comparison(study)
-    verdict = forecast_portfolio_verdict(comparison)
+    table = forecast_portfolio_table(comparison)
 
     assert comparison["benchmark"] == EQUAL_WEIGHT_LABEL
     assert comparison["forecast_return"] == pytest.approx(
         study.backtests[VOL_FORECAST_LABEL].metrics["annualized_return"]
     )
-    assert "descriptive historical replay" in verdict
-    assert EQUAL_WEIGHT_LABEL in verdict
-
-    too_short = dict(comparison, sharpe_delta=np.nan)
-    assert "too short" in forecast_portfolio_verdict(too_short)
+    assert comparison["start"].year == 2020
+    assert comparison["end"] == pd.Timestamp("2026-08-03")
+    assert table["Portfolio"].tolist() == ["Forecast", EQUAL_WEIGHT_LABEL]
+    assert table.columns.tolist() == [
+        "Portfolio",
+        "Annualized return",
+        "Sharpe above cash",
+        "Maximum drawdown",
+        "Annualized turnover",
+    ]
 
 
 def test_forecast_portfolio_comparison_rejects_misaligned_histories(bundle):

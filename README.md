@@ -1,255 +1,56 @@
 # ETF Research Studio
 
-ETF Research Studio is a read-only research application with two deliberately
-separate experiences: an ETF Allocation Workbench for fixed, explainable
-portfolio policies and the original walk-forward ML sector study. The workbench
-is the first tab; the existing ML allocation, backtest, and research results are
-unchanged and remain clearly labeled as ML research.
+[Open ETF Research Studio](https://etf-rebalancer.streamlit.app/)
 
-Live app: https://etf-rebalancer.streamlit.app/
+ETF Research Studio is a browser-based research application for ETF portfolio
+design, strategy comparison, and forecast analysis.
 
-## What It Demonstrates
+## What You Can Do
 
-- Time-series ML workflow with monthly walk-forward retraining
-- No-lookahead backtesting with transaction-cost assumptions
-- One common monthly engine for every workbench strategy and benchmark
-- Fixed Volatility Balanced, Volatility Balanced + Trend, and Equal Weight policies
-- Offline TimesFM-3 multivariate/univariate forecast research with a last-value baseline
-- Explicit analytical cash, current-weight validation, and reconciled ETF tickets
-- Portfolio construction with long-only, top-sector, and max-weight constraints
-- Benchmarking against `SPY`, equal-weight sectors, and a simple momentum baseline
-- Interactive Streamlit UX for allocation review, analytical trade-ticket generation,
-  and a separately labeled exploratory ML remix
-- Lightweight validation tests and a local benchmark script for reproducibility
+- Build a portfolio from one to eight ETFs.
+- Compare equal weight, volatility-based allocation, trend, cash, and a
+  TimesFM-3 forecast filter on the same dates.
+- Review returns, drawdowns, turnover, costs, and monthly target weights.
+- See why each ETF receives its latest weight.
+- Compare a separate machine-learning sector strategy with SPY and two simple
+  sector benchmarks.
+- Move a selected target into Portfolio Lab and create a percentage or dollar
+  rebalance ticket.
+
+## Research Views
+
+| View | Main question |
+| --- | --- |
+| ETF Allocation Workbench | How do different allocation rules change this ETF portfolio? |
+| TimesFM-3 Forecast Analysis | How does a one-month price forecast change ETF-versus-cash decisions? |
+| ML Sector Study | How does a monthly sector model compare with SPY, equal-weight sectors, and momentum? |
+| Portfolio Lab | What changes move the current portfolio to the selected target? |
 
 ## Current Research Snapshot
 
-The committed artifacts were generated with market data through `2026-04-30`.
+- The ETF price library covers **January 29, 1993 through August 31, 2026**.
+  Each workbench comparison starts when the selected ETFs have enough shared data.
+- The completed TimesFM-3 check covers signals from **June 30, 2009 through
+  June 30, 2026**, with results through **August 3, 2026**.
+- The ML sector study covers **January 31, 2015 through April 30, 2026**.
 
-| Strategy | CAGR | Sharpe | Max Drawdown |
+| ML sector comparison | Annualized return | Sharpe ratio | Maximum drawdown |
 | --- | ---: | ---: | ---: |
 | ML Signal Blend | 10.43% | 0.74 | -19.33% |
 | Equal-Weight Sectors | 11.84% | 0.81 | -23.60% |
-| 6M Momentum Top 3 | 10.01% | 0.70 | -15.29% |
+| 6-Month Momentum Top 3 | 10.01% | 0.70 | -15.29% |
 | SPY Buy & Hold | 13.55% | 0.90 | -23.93% |
 
-This project does **not** claim that the ML strategy beats SPY. The value is in the end-to-end research system: feature engineering, walk-forward validation, allocation logic, benchmarking, explainability, and an interactive portfolio workflow.
+Annualized return is the compound yearly growth rate. The Sharpe ratio compares
+return with return variability. Maximum drawdown is the largest decline from a
+previous portfolio high.
 
-## Product Features
+## How The Research Works
 
-- Curated 1–8 ETF workbench with a mixed `SPY` / `IEF` / `GLD` default
-- Historical comparisons against Equal Weight and analytical cash; Buy & Hold is
-  available only for a single ETF, and duplicate one-ETF paths are hidden
-- Date-range and transaction-cost controls with every selected historical range
-  restarted from cash and charged its entry cost
-- Full-artifact proposed current targets with signal/execution/artifact provenance,
-  allocation/turnover/cost history, drawdowns,
-  concise metrics, “Why this weight?” diagnostics, and CSV downloads
-- Optional current ETF plus explicit cash weights. Inputs are never normalized;
-  invalid weights leave strategy research running but disable Current Mix,
-  Portfolio Lab transfer, and the ticket
-- An explicit authoritative-target transfer to Portfolio Lab. Its percentage-point
-  and optional dollar ticket keeps analytical cash separate from ETF orders
-- Current sector ETF allocation with forecast, momentum, and stability signals
-- Walk-forward backtest from `2015-01-31` through the latest available month
-- Equity curve, drawdown, annual return, turnover, and model-driver views
-- Portfolio Lab for exact synced workbench targets and analytical rebalance tickets
-- An isolated `ML Sandbox — exploratory, non-authoritative` signal remix that
-  cannot read or write the workbench target, transfer, or ticket
-- Read-only dashboard backed by committed `artifacts/latest` files, so visitors are not triggering model training or data writes
+- [Research guide](docs/research/README.md)
+- [ETF allocation methods](docs/research/etf-allocation.md)
+- [TimesFM-3 forecast method](docs/research/timesfm-3.md)
+- [ML sector study](docs/research/ml-sector-study.md)
 
-## Try The TimesFM-3 Research Lab
-
-1. Open **ETF Allocation Workbench** and keep the default `SPY` / `IEF` / `GLD`
-   portfolio, or choose one to eight curated ETFs.
-2. Keep **Forecast filter**, **Equal Weight**, and **SPY reference** selected for a
-   readable apples-to-apples comparison.
-3. Read the TimesFM scorecards first: they show forecast error, direction accuracy,
-   uncertainty coverage, and whether using all 14 ETF histories improved on the
-   one-series model.
-4. Read the plain-language portfolio verdict. It states when the forecast filter
-   improved a result, when evidence is mixed, and how much extra turnover it created.
-5. Open **Audit past TimesFM forecasts**, choose any selected ETF, and hover the
-   median forecast, realized one-month return, and contemporaneous cash hurdle.
-6. Inspect the latest recorded ETF-versus-cash decisions. Historical-only targets
-   remain inspectable and downloadable, but only current or constant targets can be
-   sent to Portfolio Lab.
-
-This is intentionally an honest model audit rather than an “AI wins” demo. The
-committed replay currently shows only a modest multivariate forecasting improvement,
-and the forecast-filtered portfolio can underperform a simple reference after costs.
-Surfacing that result is part of the project’s value: visitors can distinguish forecast
-quality, allocation logic, portfolio outcomes, and execution readiness instead of
-being shown a single flattering backtest.
-
-![TimesFM-3 research scorecard and portfolio verdict](docs/screenshots/timesfm/research-lab.png)
-
-![Interactive historical TimesFM forecast audit](docs/screenshots/timesfm/replay-audit.png)
-
-## Quickstart
-
-```bash
-git clone https://github.com/sabdulmajid/ml-etf-rebalancer.git
-cd ml-etf-rebalancer
-python -m pip install -r requirements.txt
-streamlit run dashboard/app.py
-```
-
-The dashboard opens in your browser and works immediately from the two committed
-artifact bundles. No public runtime data download occurs.
-
-To refresh the research artifacts with current market data:
-
-```bash
-python run_pipeline.py
-streamlit run dashboard/app.py
-```
-
-Useful local commands:
-
-```bash
-make test        # run validation tests
-make benchmark   # refresh artifacts and benchmark local health
-make refresh     # rebuild artifacts only
-make app         # launch the dashboard
-```
-
-### Optional TimesFM-3 research build
-
-TimesFM-3 is an offline artifact builder, not a Streamlit runtime dependency.
-Install its isolated dependency set only on the machine used to generate
-forecasts:
-
-```bash
-python -m venv .venv-timesfm
-source .venv-timesfm/bin/activate
-python -m pip install -r requirements-timesfm.txt
-python build_timesfm_artifacts.py --device cpu
-```
-
-Use `--device cuda` on a compatible GPU. The first run downloads the pinned
-checkpoint and produces the full historical research bundle; later runs reuse
-unchanged month/model results and calculate only missing origins. For an
-air-gapped refresh after the checkpoint is cached, pass both `--cache-dir PATH`
-and `--local-files-only`. `--full` intentionally ignores reusable results.
-
-The model always receives all 14 approved adjusted-close series jointly using
-exactly 512 completed XNYS sessions. It has no covariates and is not fine-tuned.
-For each completed month, forecast step one is the following trading session
-and the final step is the next monthly execution date. The research score is
-the median forecast at period end divided by the median forecast at execution,
-minus one. The last safely known EFFR/SOFR observation must have an effective
-date strictly before the signal date; its Actual/360 return is retained as the
-cash hurdle.
-
-The committed research bundle contains TimesFM-3 multivariate and univariate
-results plus a flat, point-only last-value forecast. The last-value baseline has
-MAE, RMSE, and MASE, but no directional or probabilistic metrics: a flat point
-forecast is a tie rather than an up/down call, and repeated point values are not
-a predictive distribution. TimesFM's q10 and q90 values are marginal future
-price quantiles at each horizon; they are not an 80% interval for the derived
-holding return. The evaluation is a historical replay, not an out-of-sample
-claim, and overlap between the model's pretraining data and these dates is
-unknown. Streamlit now reads this committed bundle locally and exposes one
-additional research comparison, **Volatility Balanced + Forecast**. TimesFM's
-median forecast is only a binary eligibility gate: an ETF must clear the cash
-hurdle, after which the existing inverse-volatility and adaptive-cap rules set
-its weight. Forecast magnitude never scales allocation.
-
-## Methodology
-
-### ETF Allocation Workbench
-
-The workbench reads only the validated files in `artifacts/workbench`. It uses
-adjusted daily closes to form completed monthly signal/execution periods and uses
-the common engine in `backtest/engine.py` for drift, one-way turnover,
-transaction costs, entry behavior, cash, and performance metrics for every
-strategy and comparison. Strategy policy is fixed in `strategies/allocation.py`;
-there are no methodology sliders in the UI. No ETF can receive more than 150% of
-its equal-weight share.
-
-Latest targets always use the entire artifact. Changing the historical chart
-range only changes the displayed backtest, which restarts from 100% cash. A
-valid entered Current Mix is a hypothetical constant target reset monthly, not
-a reconstruction of actual holdings history.
-
-When the forecast comparison is selected, every displayed history aligns to its
-completed replay periods. When it is not selected, standard approaches retain
-their longer native history. `SPY — U.S. equity reference` uses the same engine,
-dates, costs, and cash accounting as the other displayed lines. Tactical latest
-targets are transferable only after they were produced before their intended
-execution close and while their holding window remains current. Their model
-generation, workbench refresh, and forecast-bundle refresh timestamps are shown
-separately. Missing, corrupt, scheduled, late, or expired forecast artifacts
-never disable the base workbench or the existing ML views.
-
-**Cash — U.S. overnight-rate proxy** uses official EFFR before April 2, 2018 and
-official SOFR from that date, with Actual/360 accrual. It is analytical and
-non-investable. `BIL` is a separately selectable ETF;
-`CASH:USD_OVERNIGHT` is never a ticker or security order.
-
-### Existing ML Sector Study
-
-Universe: `XLB`, `XLE`, `XLF`, `XLI`, `XLK`, `XLP`, `XLU`, `XLV`, `XLY`
-
-Benchmark: `SPY`
-
-Pipeline:
-
-1. Download adjusted daily ETF prices with `yfinance`.
-2. Build monthly technical features: momentum, volatility, moving-average ratios, and relative strength.
-3. Train regularized regression models in a monthly walk-forward loop.
-4. Blend model forecast, six-month momentum, and inverse-volatility stability signals.
-5. Construct a long-only portfolio using top-sector selection and max-weight constraints.
-6. Subtract transaction costs from turnover.
-7. Export stable artifacts for the dashboard.
-
-## Validation
-
-The repository includes tests for allocator constraints, artifact schema, strategy outputs, and dashboard smoke execution:
-
-```bash
-pytest -q
-python tools/benchmark.py --pipeline
-```
-
-The exact passing test count and artifact-build timings are recorded in each
-pull request because both change as the research system grows.
-
-## Project Structure
-
-```text
-artifacts/latest/       Stable dashboard-ready research outputs
-artifacts/workbench/    Validated ETF and analytical-cash bundle
-artifacts/timesfm/       Validated offline forecast research bundle
-dashboard/app.py        Streamlit research terminal
-dashboard/workbench.py  Workbench calculations, downloads, and UI
-backtest/               Common monthly accounting and metrics
-data/features.py        Feature engineering
-portfolio/rebalance.py  ML allocation helper plus workbench ticket validation
-portfolio/research.py   Walk-forward research engine
-strategies/allocation.py Fixed workbench target generators
-strategies/forecast.py  TimesFM binary-filter target generator
-forecasting/             Offline TimesFM timing, inference, and evaluation
-build_timesfm_artifacts.py Offline deterministic forecast artifact builder
-tests/                  Local validation tests
-tools/benchmark.py      Local health and benchmark script
-run_pipeline.py         Artifact refresh entrypoint
-```
-
-## Scope And Limitations
-
-- This is an educational research project, not investment advice.
-- It is not a live trading system and does not place orders.
-- Analytical cash is not investable and is not a substitute for a deposit,
-  money-market fund, Treasury bill, or executable cash return.
-- It does not claim predictive superiority over passive indexing.
-- It uses Yahoo Finance data via `yfinance`, which is appropriate for research/demo use but not institutional-grade market data.
-- Backtest results depend on the selected universe, assumptions, rebalance timing, and transaction-cost model.
-
-The ML Signal Remix is retained only inside `ML Sandbox — exploratory,
-non-authoritative`; it is disconnected from the authoritative workbench target,
-Portfolio Lab session state, and ticket. The hindsight scenario stress test was
-removed because applying a current target to past regimes implied a holdings
-history that did not exist. These UI decisions change no feature engineering,
-model fitting, signals, targets, artifacts, or stored ML results.
+Developer setup, data refresh, and deployment instructions are in
+[DEPLOYMENT.md](DEPLOYMENT.md).
