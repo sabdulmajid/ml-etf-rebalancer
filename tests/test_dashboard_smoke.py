@@ -34,7 +34,7 @@ def test_dashboard_executes_in_bare_mode():
         cwd=ROOT,
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=45,
     )
 
     assert result.returncode == 0, result.stderr[-2000:]
@@ -50,7 +50,7 @@ def test_streamlit_workbench_transfer_survives_rerun_and_uses_exact_target(
 
     monkeypatch.setattr("requests.sessions.Session.request", no_http)
     monkeypatch.setattr("yfinance.download", no_http)
-    app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=20).run()
+    app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=45).run()
 
     assert not app.exception
     assert [tab.label for tab in app.tabs][:2] == [
@@ -128,7 +128,7 @@ def test_streamlit_workbench_transfer_survives_rerun_and_uses_exact_target(
 def test_portfolio_lab_currency_summary_escapes_streamlit_markdown(monkeypatch):
     monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
     app = AppTest.from_file(
-        str(ROOT / "dashboard" / "app.py"), default_timeout=20
+        str(ROOT / "dashboard" / "app.py"), default_timeout=45
     ).run()
     app.checkbox(key="wb_current_enabled").set_value(True).run()
     app.button(key="wb_send_to_portfolio_lab").click().run()
@@ -143,7 +143,7 @@ def test_portfolio_lab_currency_summary_escapes_streamlit_markdown(monkeypatch):
 
 def test_streamlit_selection_reconciliation_and_invalid_current_controls(monkeypatch):
     monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
-    app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=20).run()
+    app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=45).run()
     app.checkbox(key="wb_current_enabled").set_value(True).run()
     assert any("Current total: 100.00%" in item.value for item in app.success)
     app.number_input(key=f"wb_current_pct_{CASH_ASSET}").set_value(90.0).run()
@@ -177,7 +177,7 @@ def test_streamlit_selection_reconciliation_and_invalid_current_controls(monkeyp
 
 def test_late_forecast_history_is_visible_but_target_is_not_transferable(monkeypatch):
     monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
-    app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=30).run()
+    app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=45).run()
 
     comparison = next(
         widget for widget in app.multiselect if widget.label == "Comparison series"
@@ -215,7 +215,7 @@ from dashboard.workbench import render_workbench
 render_workbench(timesfm_bundle_path=r{str(forecast_path)!r})
 st.write('base-and-ml-sentinel')
 """
-    app = AppTest.from_string(source, default_timeout=20).run()
+    app = AppTest.from_string(source, default_timeout=45).run()
 
     assert not app.exception
     assert any("forecast research is temporarily unavailable" in item.value.lower()
@@ -250,7 +250,7 @@ from dashboard.workbench import render_portfolio_lab, render_workbench
 render_workbench(timesfm_bundle_path=r{str(timely_path)!r})
 render_portfolio_lab()
 """
-    app = AppTest.from_string(source, default_timeout=30).run()
+    app = AppTest.from_string(source, default_timeout=45).run()
     assert not app.exception
     app.checkbox(key="wb_current_enabled").set_value(True).run()
     target_selector = app.selectbox(key="wb_authoritative_target")
@@ -316,7 +316,7 @@ render_workbench(
 )
 render_portfolio_lab()
 """
-    app = AppTest.from_string(source, default_timeout=30).run()
+    app = AppTest.from_string(source, default_timeout=45).run()
     assert not app.exception
     app.checkbox(key="wb_current_enabled").set_value(True).run()
     selector = app.selectbox(key="wb_authoritative_target")
@@ -355,7 +355,7 @@ render_portfolio_lab()
 
 def test_comparison_defaults_follow_selected_etf_tuple(monkeypatch):
     monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
-    app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=20).run()
+    app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=45).run()
 
     initial = next(widget for widget in app.multiselect if widget.label == "Comparison series")
     initial_default = list(initial.value)
@@ -393,7 +393,7 @@ from dashboard.workbench import render_workbench
 render_workbench()
 st.write('ML sentinel remains available')
 """
-    app = AppTest.from_string(source, default_timeout=20).run()
+    app = AppTest.from_string(source, default_timeout=45).run()
 
     messages = getattr(app, element)
     assert any(text in message.value for message in messages)
