@@ -1232,7 +1232,7 @@ def render_workbench(
             "available; Current Mix, Portfolio Lab transfer, and ticket are disabled."
         )
 
-    controls = st.columns([1, 1, 2])
+    controls = st.columns(2)
     transaction_cost_bps = controls[0].number_input(
         "Transaction cost (bps)",
         min_value=0.0,
@@ -1315,7 +1315,7 @@ def render_workbench(
     comparison_kwargs = (
         {} if comparison_widget_key in st.session_state else {"default": stored}
     )
-    comparisons = controls[2].multiselect(
+    comparisons = st.multiselect(
         "Comparison series",
         options=options,
         key=comparison_widget_key,
