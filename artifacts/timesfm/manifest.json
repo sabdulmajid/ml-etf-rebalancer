@@ -1,6 +1,6 @@
 {
   "schema_version": "timesfm-research-bundle-v1",
-  "generated_at_utc": "2026-09-04T04:55:50.413716Z",
+  "generated_at_utc": "2026-09-04T04:56:44.615061Z",
   "artifact_kind": "timesfm3-zero-shot-research",
   "publication_allowed": true,
   "model_execution_status": "complete",
@@ -80,7 +80,7 @@
     "huggingface-hub": "1.30.0",
     "safetensors": "0.8.0"
   },
-  "git_sha": "7520fa6b2b482cabf8a7ffd5d0422a110c231367",
+  "git_sha": "28873b8ed2651f632b2c21080f46b0a57a6a4e4d",
   "git_dirty_at_build": false,
   "pipeline_version": "timesfm-artifact-builder-v1",
   "runtime": {
@@ -97,20 +97,20 @@
     "timesfm3_multivariate": {
       "forecast_origins": 206,
       "total_inference_seconds": 265.8876891020045,
-      "median_inference_seconds": 1.217235536998487,
-      "maximum_inference_seconds": 1.9724936520069605
+      "median_inference_seconds": 1.21723553699849,
+      "maximum_inference_seconds": 1.97249365200696
     },
     "timesfm3_univariate": {
       "forecast_origins": 206,
-      "total_inference_seconds": 305.2053126630635,
-      "median_inference_seconds": 1.4162204435051535,
-      "maximum_inference_seconds": 2.071025634999387
+      "total_inference_seconds": 305.2053126630634,
+      "median_inference_seconds": 1.41622044350515,
+      "maximum_inference_seconds": 2.07102563499939
     }
   },
   "refresh": {
-    "mode": "full",
-    "reused_mode_signal_groups": 0,
-    "generated_mode_signal_groups": 618
+    "mode": "incremental",
+    "reused_mode_signal_groups": 618,
+    "generated_mode_signal_groups": 0
   },
   "validation_status": "passed",
   "row_counts": {
@@ -118,7 +118,7 @@
     "forecast_metrics.csv": 45
   },
   "file_sha256": {
-    "forecast_signals.csv": "f9fa2bbd7e213f4b33f3fd659a77cd484a1275650489459126b113fc700e1d1a",
-    "forecast_metrics.csv": "e461eba70dba419e5da8f6443e92b1240b40467d6157d24a208de6b9513c1487"
+    "forecast_signals.csv": "3d277c9b66f0b75938a69335c56abccaa3c81403ccef67ef41fae0f03b31a904",
+    "forecast_metrics.csv": "9b2550fb5795b4b06830463ed0eb107bd5840cad068fa1d7720d1becd1d98337"
   }
 }

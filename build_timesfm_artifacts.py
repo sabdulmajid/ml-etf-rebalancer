@@ -235,10 +235,10 @@ def _write_bundle(staging, signals, metrics, manifest):
         staging / "forecast_signals.csv",
         index=False,
         date_format="%Y-%m-%d",
-        float_format="%.15g",
+        float_format="%.17g",
     )
     metrics.to_csv(
-        staging / "forecast_metrics.csv", index=False, float_format="%.15g"
+        staging / "forecast_metrics.csv", index=False, float_format="%.17g"
     )
     manifest = dict(manifest)
     manifest["row_counts"] = {
@@ -404,10 +404,16 @@ def build_bundle(
         "git_sha": git_sha,
         "git_dirty_at_build": git_dirty,
         "pipeline_version": PIPELINE_VERSION,
-        "runtime": {
-            "device": getattr(runner, "device", "reused-or-injected"),
-            "builder_peak_rss_kb": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
-        },
+        "runtime": (
+            existing_bundle.manifest["runtime"]
+            if runner is None and existing_bundle is not None
+            else {
+                "device": getattr(runner, "device", "injected-test-runner"),
+                "builder_peak_rss_kb": int(
+                    resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                ),
+            }
+        ),
         "performance": performance,
         "refresh": {
             "mode": "full" if full or existing is None else "incremental",

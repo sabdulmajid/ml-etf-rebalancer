@@ -313,8 +313,12 @@ def validate_timesfm_bundle(path=DEFAULT_BUNDLE_PATH, verify_checksums=True, req
         for filename in PUBLIC_FILENAMES[:-1]:
             if manifest["file_sha256"].get(filename) != file_sha256(path / filename):
                 raise ValueError(f"checksum mismatch for {filename}")
-    signals = pd.read_csv(path / "forecast_signals.csv")
-    metrics = pd.read_csv(path / "forecast_metrics.csv")
+    signals = pd.read_csv(
+        path / "forecast_signals.csv", float_precision="round_trip"
+    )
+    metrics = pd.read_csv(
+        path / "forecast_metrics.csv", float_precision="round_trip"
+    )
     if manifest["row_counts"] != {
         "forecast_signals.csv": len(signals),
         "forecast_metrics.csv": len(metrics),
