@@ -1,0 +1,131 @@
+{
+  "schema_version": "timesfm-research-bundle-v2",
+  "artifact_kind": "timesfm3-zero-shot-research",
+  "publication_allowed": true,
+  "model_execution_status": "complete",
+  "model_policy": {
+    "policy_version": "timesfm3-zero-shot-policy-v2",
+    "checkpoint_id": "google/timesfm-3.0-pytorch",
+    "checkpoint_revision": "43046b85ec22d584a13f8098c2ed39c889e129c2",
+    "timesfm_source_revision": "aa480150652811e732d87a3c5344b235234104e3",
+    "context_sessions": 512,
+    "universe_mode": "all-14-etfs-jointly",
+    "covariates": "none",
+    "fine_tuning": false,
+    "quantile_levels": [
+      0.1,
+      0.2,
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.7,
+      0.8,
+      0.9
+    ],
+    "holding_score": "q50(period_end) / q50(execution) - 1",
+    "cash_hurdle": "last overnight-rate effective date strictly before signal; Actual/360 over execution-to-period-end calendar days",
+    "evaluator": {
+      "return_quantiles": true,
+      "use_symmetric_averaging": true,
+      "make_positive": true,
+      "sort_quantiles": true,
+      "use_znorm": false,
+      "padding_mode": "none"
+    },
+    "primary_mode": "timesfm3_multivariate",
+    "per_core_batch_size": 16
+  },
+  "model_policy_sha256": "faed84a2ddc391e4b957c6686ea115e9465896d2bf31a9d85ac07743b4f17efd",
+  "model_modes": [
+    "last_value",
+    "timesfm3_univariate",
+    "timesfm3_multivariate"
+  ],
+  "ticker_order": [
+    "SPY",
+    "IWM",
+    "EFA",
+    "EEM",
+    "AGG",
+    "BIL",
+    "SHY",
+    "IEF",
+    "TLT",
+    "TIP",
+    "LQD",
+    "HYG",
+    "GLD",
+    "DBC"
+  ],
+  "workbench_input": {
+    "schema_version": "workbench-bundle-v1",
+    "price_data_as_of": "2026-08-31",
+    "last_complete_month": "2026-08-31",
+    "file_sha256": {
+      "adjusted_close.csv": "9cd999fd4cceebc8b32782ade29b63f0185e74f54cab73b03fea90affda29a73",
+      "cash_index.csv": "b9ba5141a44dd56bb686b0b67f303e545a92c275bc2cd9504ca7c8122ba9fa51",
+      "instruments.csv": "b03c6f41368cef640e07927159aa88ea24225015097f80ae043d1d6fee2fc101",
+      "manifest.json": "9c63c1198dc62ffe24b2a76c3911f728ce7df42bac6f52b032e3aa7fdaa162be"
+    }
+  },
+  "forecast_signal_start": "2009-06-30",
+  "forecast_signal_end": "2026-08-31",
+  "pipeline_version": "timesfm-artifact-builder-v2",
+  "model_generations": [
+    {
+      "id": "timesfm3-20260904T053630Z-e8512d77",
+      "generated_at_utc": "2026-09-04T05:36:30.250688Z",
+      "git_sha": "e8512d777770fbda8aff30ddc0844821dcc194e4",
+      "git_dirty_at_build": false,
+      "dependency_versions": {
+        "numpy": "2.2.6",
+        "pandas": "2.3.3",
+        "exchange-calendars": "4.13.2",
+        "timesfm": "3.0.1",
+        "torch": "2.14.0+cpu",
+        "huggingface-hub": "1.30.0",
+        "safetensors": "0.8.0"
+      },
+      "runtime": {
+        "device": "cpu",
+        "builder_peak_rss_kb": 2904948
+      },
+      "model_policy_sha256": "faed84a2ddc391e4b957c6686ea115e9465896d2bf31a9d85ac07743b4f17efd",
+      "performance": {
+        "timesfm3_multivariate": {
+          "forecast_origins": 207,
+          "total_inference_seconds": 242.2767662598635,
+          "median_inference_seconds": 1.1450763660104712,
+          "maximum_inference_seconds": 1.7802816750045167
+        },
+        "timesfm3_univariate": {
+          "forecast_origins": 207,
+          "total_inference_seconds": 286.13205309104524,
+          "median_inference_seconds": 1.3606516709987773,
+          "maximum_inference_seconds": 1.9533976179955062
+        }
+      }
+    }
+  ],
+  "bundle_refresh": {
+    "generated_at_utc": "2026-09-04T05:36:30.250688Z",
+    "git_sha": "e8512d777770fbda8aff30ddc0844821dcc194e4",
+    "git_dirty_at_build": false,
+    "mode": "full",
+    "reused_mode_signal_groups": 0,
+    "generated_baseline_groups": 207,
+    "generated_model_groups": 414
+  },
+  "evaluation_classification": "historical_replay",
+  "pretraining_overlap": "unknown",
+  "validation_status": "passed",
+  "row_counts": {
+    "forecast_signals.csv": 8694,
+    "forecast_metrics.csv": 45
+  },
+  "file_sha256": {
+    "forecast_signals.csv": "470d3afe41ef683fdb03b1561bcf9179a0760975b9d24ec9a062b48245286f52",
+    "forecast_metrics.csv": "cc020bf7d0b4989d3fbf3ee26198297a8d4c370a75fd15d14a8065134bf0dc4a"
+  }
+}

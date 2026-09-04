@@ -1,0 +1,4 @@
+# Optional offline research environment. Streamlit Community Cloud installs only
+# requirements.txt and therefore never loads Torch or the TimesFM checkpoint.
+-r requirements.txt
+timesfm[torch] @ git+https://github.com/google-research/timesfm.git@aa480150652811e732d87a3c5344b235234104e3

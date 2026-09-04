@@ -27,6 +27,10 @@ The deployed app does not run model training or download market data from the
 UI. Both the existing ML experience and the ETF Allocation Workbench read only
 committed, reviewable artifacts.
 
+`requirements-timesfm.txt` is intentionally separate. Do not configure it as
+the Streamlit dependency file: the public process does not need Torch, the
+TimesFM package, or the checkpoint.
+
 The workbench cache key includes the resolved bundle path plus a SHA-256 digest
 of each of the four public files. Replacing any file invalidates the cached
 validated bundle and full-artifact allocation schedules even when file size and
@@ -140,6 +144,79 @@ authoritative workbench target, `portfolio_lab_transfer`, or any ticket. The
 hindsight scenario stress test remains removed because applying a current target
 to past regimes implied a holdings history that did not exist. Existing ML
 artifacts and historical results are not modified.
+
+## Building TimesFM Research Artifacts
+
+The TimesFM builder lives in this repository but runs outside the Streamlit
+process. It reads the validated workbench bundle and writes exactly three small
+files:
+
+```text
+artifacts/timesfm/
+    forecast_signals.csv
+    forecast_metrics.csv
+    manifest.json
+```
+
+Set up the optional environment and run a full build:
+
+```bash
+python -m venv .venv-timesfm
+source .venv-timesfm/bin/activate
+python -m pip install -r requirements-timesfm.txt
+python build_timesfm_artifacts.py --full --device cpu
+python -c "from data.timesfm import load_timesfm_bundle; load_timesfm_bundle()"
+```
+
+The checkpoint ID and revision are fixed in `forecasting/timesfm.py`. A cached
+offline run can be enforced explicitly:
+
+```bash
+python build_timesfm_artifacts.py \
+  --device cpu \
+  --cache-dir /absolute/path/to/huggingface-cache \
+  --local-files-only
+```
+
+Without `--full`, an existing valid bundle is used as an incremental source.
+Each retained month/model group must match its exact 14-series context checksum,
+execution dates, horizon, and safely known cash-rate input. Actual outcome
+columns are refreshed when a formerly pending holding period becomes observable.
+If the pipeline version or complete model-policy digest changed, no model output
+is reused. If an individual input changed, that group is recomputed.
+
+The builder prevalidates complete, finite, positive inputs so TimesFM's internal
+missing-value interpolation is never exercised. It evaluates the official
+checkpoint in both multivariate and univariate modes with all evaluator flags
+written explicitly into the manifest. Forecasts through the latest completed
+signal are retained even when their execution or ending prices are not yet
+known; those rows are marked `pending` and excluded from forecast metrics.
+
+The manifest separates immutable model-generation provenance (original Git SHA,
+timestamp, dependency/runtime details, and policy digest) from bundle-refresh
+provenance. An incremental refresh that reuses every forecast does not claim to
+have executed the model. Release validation also rejects model outputs generated
+from a dirty worktree, even if a later metadata refresh itself was clean.
+
+Evaluation is classified as `historical_replay`; model-pretraining overlap is
+`unknown`, so these results must not be described as out of sample. The flat
+last-value comparator is point-only: its MAE, RMSE, and MASE are valid, while
+direction, pinball loss, coverage, and interval width are intentionally N/A.
+TimesFM q10-q90 outputs are marginal price quantiles at each forecast horizon,
+not an 80% probability interval for the ratio-derived holding return. Any later
+UI must present price uncertainty directly or label a derived return range as a
+heuristic rather than a calibrated interval.
+
+As with the workbench builder, a release build refuses a dirty Git tree. Files
+are written and validated in a staging directory before a recoverable directory
+rename replaces the prior bundle. Review the manifest's checkpoint revision,
+workbench checksums, row counts, mode coverage, dependency versions, performance
+timings, and `validation_status` before committing it.
+
+The public app must load the CSV/JSON bundle through `data.timesfm`; it must not
+import `build_timesfm_artifacts`, `forecasting.timesfm.TimesFM3Runner`, Torch, or
+TimesFM. A missing or invalid forecast bundle must never prevent the existing
+workbench or ML research experience from starting.
 
 ## Deterministic Local UI Capture
 

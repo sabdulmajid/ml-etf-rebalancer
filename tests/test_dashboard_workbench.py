@@ -73,8 +73,9 @@ def test_content_cache_detects_same_size_same_mtime_bundle_corruption(tmp_path):
 
 
 def test_freshness_policy_allows_one_month_warning_and_disables_two_or_future(bundle):
-    assert bundle.freshness(as_of="2026-09-15")["status"] == "warning"
-    assert bundle.freshness(as_of="2026-10-15")["status"] == "disabled"
+    assert bundle.freshness(as_of="2026-09-15")["status"] == "current"
+    assert bundle.freshness(as_of="2026-10-15")["status"] == "warning"
+    assert bundle.freshness(as_of="2026-11-15")["status"] == "disabled"
     future = bundle.freshness(as_of="2026-08-01T12:00:00Z")
     assert future["status"] == "disabled"
     assert "future" in future["reason"]
