@@ -77,6 +77,25 @@ ALLOCATION_LABELS = {
     EQUAL_WEIGHT_LABEL: EQUAL_WEIGHT,
 }
 
+COMPARISON_SELECTOR_LABELS = {
+    VOL_BALANCED_LABEL: "Balanced",
+    VOL_TREND_LABEL: "Balanced + Trend",
+    VOL_FORECAST_LABEL: "Balanced + Forecast",
+    EQUAL_WEIGHT_LABEL: "Equal Weight",
+    CASH_LABEL_SHORT: "Cash",
+    SPY_REFERENCE_LABEL: "SPY reference",
+    BUY_HOLD_LABEL: "Buy & Hold",
+    CURRENT_MIX_LABEL: "Current Mix",
+}
+
+
+def comparison_selector_label(label):
+    """Return compact chip text without changing the comparison identifier."""
+    try:
+        return COMPARISON_SELECTOR_LABELS[label]
+    except KeyError as exc:
+        raise ValueError(f"unknown comparison label: {label}") from exc
+
 
 @dataclass(frozen=True)
 class WorkbenchStudy:
@@ -1318,6 +1337,7 @@ def render_workbench(
     comparisons = st.multiselect(
         "Comparison series",
         options=options,
+        format_func=comparison_selector_label,
         key=comparison_widget_key,
         **comparison_kwargs,
     )

@@ -25,6 +25,7 @@ from dashboard.workbench import (
     build_workbench_study,
     bundle_fingerprint,
     clear_workbench_caches,
+    comparison_selector_label,
     current_weight_status,
     forecast_check_summary,
     historical_download,
@@ -374,6 +375,27 @@ def test_comparison_options_prevent_incompatible_and_duplicate_series():
     assert CURRENT_MIX_LABEL in available_comparisons(
         ["SPY", "IEF"], current_weights_valid=True
     )
+
+
+def test_every_comparison_has_a_distinct_compact_selector_label():
+    options = available_comparisons(
+        ["IEF", "GLD"], current_weights_valid=True, forecast_available=True
+    ) + [BUY_HOLD_LABEL]
+    labels = [comparison_selector_label(option) for option in options]
+
+    assert len(labels) == len(set(labels))
+    assert dict(zip(options, labels, strict=True)) == {
+        VOL_BALANCED_LABEL: "Balanced",
+        VOL_TREND_LABEL: "Balanced + Trend",
+        VOL_FORECAST_LABEL: "Balanced + Forecast",
+        EQUAL_WEIGHT_LABEL: "Equal Weight",
+        CASH_LABEL_SHORT: "Cash",
+        SPY_REFERENCE_LABEL: "SPY reference",
+        CURRENT_MIX_LABEL: "Current Mix",
+        BUY_HOLD_LABEL: "Buy & Hold",
+    }
+    with pytest.raises(ValueError, match="unknown comparison label"):
+        comparison_selector_label("Unregistered comparison")
 
 
 def test_explanation_has_required_semantics_and_cash_label(bundle):
