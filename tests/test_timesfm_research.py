@@ -77,7 +77,7 @@ def test_windows_use_512_sessions_and_keep_two_pending_origins(workbench):
     windows = build_forecast_windows(
         workbench.adjusted_close, workbench.manifest["generated_at_utc"]
     )
-    assert len(windows) == 206
+    assert len(windows) == 207
     first = windows[0]
     assert first.signal_date == pd.Timestamp("2009-06-30")
     assert first.execution_date == pd.Timestamp("2009-07-01")
@@ -87,17 +87,17 @@ def test_windows_use_512_sessions_and_keep_two_pending_origins(workbench):
     assert first.context.index[-1] == first.signal_date
 
     latest = windows[-1]
-    assert latest.signal_date == pd.Timestamp("2026-07-31")
-    assert latest.execution_date == pd.Timestamp("2026-08-03")
-    assert latest.period_end_date == pd.Timestamp("2026-09-01")
+    assert latest.signal_date == pd.Timestamp("2026-08-31")
+    assert latest.execution_date == pd.Timestamp("2026-09-01")
+    assert latest.period_end_date == pd.Timestamp("2026-10-01")
     assert latest.horizon == 22
     realized = [
         window
         for window in windows
         if window.period_end_date in workbench.adjusted_close.index
     ]
-    assert len(realized) == 204
-    assert realized[-1].signal_date == pd.Timestamp("2026-05-29")
+    assert len(realized) == 205
+    assert realized[-1].signal_date == pd.Timestamp("2026-06-30")
 
 
 def test_window_builder_rejects_internal_missing_price(workbench):
@@ -160,19 +160,19 @@ def test_builder_writes_realized_and_pending_rows_and_validates(
         runner=runner,
         generated_at="2026-08-02T12:00:00Z",
     )
-    assert len(runner.calls) == 206 * 2
-    assert len(bundle.signals) == 206 * 3 * 14
+    assert len(runner.calls) == 207 * 2
+    assert len(bundle.signals) == 207 * 3 * 14
     assert set(bundle.signals["model_mode"]) == set(MODEL_MODES)
     status_counts = bundle.signals.groupby("evaluation_status").size().to_dict()
-    assert status_counts == {"pending": 2 * 3 * 14, "realized": 204 * 3 * 14}
+    assert status_counts == {"pending": 2 * 3 * 14, "realized": 205 * 3 * 14}
     assert bundle.manifest["bundle_refresh"] == {
         "generated_at_utc": "2026-08-02T12:00:00Z",
         "git_sha": "a" * 40,
         "git_dirty_at_build": False,
         "mode": "full",
         "reused_mode_signal_groups": 0,
-        "generated_baseline_groups": 206,
-        "generated_model_groups": 206 * 2,
+        "generated_baseline_groups": 207,
+        "generated_model_groups": 207 * 2,
     }
     assert bundle.manifest["evaluation_classification"] == "historical_replay"
     assert bundle.manifest["pretraining_overlap"] == "unknown"
@@ -231,7 +231,7 @@ def test_incremental_build_reuses_matching_mode_signal_groups(
     assert incremental_runner.calls == []
     refresh = refreshed.manifest["bundle_refresh"]
     assert refresh["mode"] == "incremental"
-    assert refresh["reused_mode_signal_groups"] == 206 * 3
+    assert refresh["reused_mode_signal_groups"] == 207 * 3
     assert refresh["generated_baseline_groups"] == 0
     assert refresh["generated_model_groups"] == 0
     assert refreshed.manifest["model_generations"] == initial.manifest[
@@ -273,7 +273,7 @@ def test_policy_mismatch_forces_regeneration(
         runner=replacement_runner,
         generated_at="2026-08-03T12:00:00Z",
     )
-    assert len(replacement_runner.calls) == 206 * 2
+    assert len(replacement_runner.calls) == 207 * 2
     assert regenerated.manifest["bundle_refresh"]["mode"] == "full"
     assert regenerated.manifest["bundle_refresh"]["reused_mode_signal_groups"] == 0
 
@@ -535,12 +535,12 @@ def test_freshness_disables_expired_latest_target(tmp_path, monkeypatch, workben
         workbench.path,
         full=True,
         runner=FakeRunner(),
-        generated_at="2026-08-02T12:00:00Z",
+        generated_at="2026-08-31T23:00:00Z",
     )
-    scheduled = bundle.freshness("2026-08-02T13:00:00Z")
+    scheduled = bundle.freshness("2026-08-31T23:30:00Z")
     assert scheduled["latest_target_status"] == "scheduled"
-    assert bundle.freshness("2026-08-15")["latest_target_status"] == "current"
-    expired = bundle.freshness("2026-09-04")
+    assert bundle.freshness("2026-09-15")["latest_target_status"] == "current"
+    expired = bundle.freshness("2026-10-02")
     assert expired["historical_available"] is True
     assert expired["latest_target_status"] == "disabled"
     assert expired["reason"] == "latest forecast holding period has expired"
