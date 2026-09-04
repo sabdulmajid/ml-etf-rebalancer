@@ -479,17 +479,6 @@ with st.sidebar:
     st.write(f"Max sector: {manifest.get('max_weight', 0):.0%}")
     st.write(f"Transaction cost: {manifest.get('transaction_cost_bps', 0):.0f} bps/trade")
 
-    st.markdown(
-        """
-        <div class="disclaimer">
-        Educational research tool only. This is not financial advice, not a live trading system,
-        and not a recommendation to buy or sell securities.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 scaled_equity = equity / float(manifest.get("initial_value", 10000)) * initial_capital
 primary = metrics.loc["ML Signal Blend"]
 primary_final = scaled_equity["ML Signal Blend"].iloc[-1]
@@ -500,17 +489,14 @@ st.markdown(
         <div class="eyebrow">Transparent ETF portfolio research</div>
         <h1 class="hero-title">ETF Research Studio</h1>
         <div class="hero-copy">
-            Build ETF portfolios, test whether a zero-shot TimesFM-3 forecast filter adds value, and
-            inspect the existing walk-forward machine-learning sector study. Every result comes from
-            committed, reviewable artifacts and common portfolio accounting; this application never
-            places orders.
+            Build and compare ETF portfolios. Review a TimesFM-3 one-month forecast analysis.
+            Explore a separate monthly machine-learning sector study. Then turn a selected
+            portfolio target into a clear rebalance plan.
         </div>
         <div class="pill-row">
-            <div class="pill">Allocation Workbench: 14 curated ETFs</div>
-            <div class="pill">TimesFM-3 forecast audit</div>
-            <div class="pill">ML study through {manifest["data_end"]}</div>
-            <div class="pill">Local committed artifacts</div>
-            <div class="pill">No brokerage connection</div>
+            <div class="pill">14-ETF Allocation Workbench</div>
+            <div class="pill">TimesFM-3 Forecast Analysis</div>
+            <div class="pill">ML Sector Study through {manifest["data_end"]}</div>
         </div>
     </div>
     """,
@@ -610,9 +596,8 @@ with tab_backtest:
 with tab_lab:
     render_portfolio_lab()
     st.caption(
-        "The hindsight Stress Test remains removed because applying a current target "
-        "to past regimes is semantically misleading. The exploratory Signal Remix is "
-        "isolated in ML Research Notes and cannot control this ticket."
+        "The ML Signal Explorer is in ML Research Notes. It changes its own chart "
+        "only and stays separate from this portfolio target and ticket."
     )
 
 
@@ -622,42 +607,33 @@ with tab_research:
         st.markdown("## Model Drivers")
         plot_feature_importance(features)
     with right:
-        st.markdown("## What Makes This Credible")
+        st.markdown("## Research Design")
         st.markdown(
             """
             <div class="callout">
-            <strong>No lookahead:</strong> each monthly rebalance is produced by models trained on prior months only.<br><br>
-            <strong>Realistic frictions:</strong> the displayed strategy subtracts transaction costs from turnover.<br><br>
-            <strong>Honest benchmarks:</strong> the terminal compares against SPY, equal-weight sector exposure,
+            <strong>Monthly timing:</strong> each rebalance uses models trained on prior months.<br><br>
+            <strong>Trading costs:</strong> the strategy subtracts estimated costs from monthly results.<br><br>
+            <strong>Reference portfolios:</strong> the study compares SPY, equal-weight sector exposure,
             and a simple six-month momentum baseline.<br><br>
-            <strong>Explainable allocation:</strong> every current position shows model forecast, momentum, and
-            volatility-stability contributions.
+            <strong>Weight detail:</strong> each current position shows its forecast, momentum, and
+            stability inputs.
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-        st.markdown("## Methodology")
-        st.write(manifest["methodology"])
-        st.write(f"Source data: adjusted ETF close prices from Yahoo Finance via `yfinance`.")
-        st.write(f"Generated from git revision `{manifest.get('git_sha', 'unknown')}`.")
-
-        st.markdown("## Responsible Use")
+        st.markdown("## Method Guide")
         st.markdown(
-            """
-            <div class="disclaimer">
-            This app is designed to demonstrate research engineering, model validation, and portfolio analytics.
-            It should not be used as a standalone investment decision system.
-            </div>
-            """,
-            unsafe_allow_html=True,
+            "[Read the features, model, score, and portfolio rules]"
+            "(https://github.com/sabdulmajid/ml-etf-rebalancer/blob/master/"
+            "docs/research/ml-sector-study.md)."
         )
 
-    st.markdown("## ML Sandbox — exploratory, non-authoritative")
+    st.markdown("## ML Signal Explorer")
     st.caption(
-        "Remix the existing ML artifact scores for visual research only. This sandbox "
-        "does not change the selected workbench proposal, Portfolio Lab session "
-        "state, or any rebalance ticket."
+        "Change the forecast, momentum, and stability mix to see how the current "
+        "sector ranking changes. This view stays separate from the workbench target "
+        "and Portfolio Lab ticket."
     )
     remix_cols = st.columns(5)
     forecast_mix = remix_cols[0].slider(

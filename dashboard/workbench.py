@@ -884,7 +884,7 @@ def why_this_weight(bundle, study, label):
             for ticker in study.selected_etfs
         ]
         if label == CASH_LABEL_SHORT:
-            reason = "This comparison intentionally holds 100% analytical cash."
+            reason = "This comparison holds 100% analytical cash."
         elif label == BUY_HOLD_LABEL:
             reason = "Buy & Hold stays fully invested in the selected ETF, so cash is 0%."
         else:
@@ -949,12 +949,12 @@ def forecast_check_summary(metrics):
         ]
     ].rename(
         columns={
-            "observations": "Forecasts",
-            "holding_return_mae": "Return MAE ↓",
-            "period_end_price_mase": "Period-end price MASE ↓",
-            "directional_accuracy": "Direction accuracy ↑",
-            "mean_pinball_loss": "Pinball loss ↓",
-            "interval_80_coverage": "q10–q90 price coverage",
+            "observations": "Completed ETF-months",
+            "holding_return_mae": "Average return difference ↓",
+            "period_end_price_mase": "Scaled final-price difference ↓",
+            "directional_accuracy": "Correct up-or-down calls ↑",
+            "mean_pinball_loss": "Probability forecast difference ↓",
+            "interval_80_coverage": "Final price inside 10%–90% range",
         }
     )
 
@@ -963,12 +963,12 @@ def forecast_checks_for_display(checks):
     """Format a numeric forecast-check summary with explicit unavailable marks."""
     formats = {
         "Model": None,
-        "Forecasts": "{:,.0f}",
-        "Return MAE ↓": "{:.2%}",
-        "Period-end price MASE ↓": "{:.2f}",
-        "Direction accuracy ↑": "{:.2%}",
-        "Pinball loss ↓": "{:.4f}",
-        "q10–q90 price coverage": "{:.2%}",
+        "Completed ETF-months": "{:,.0f}",
+        "Average return difference ↓": "{:.2%}",
+        "Scaled final-price difference ↓": "{:.2f}",
+        "Correct up-or-down calls ↑": "{:.2%}",
+        "Probability forecast difference ↓": "{:.4f}",
+        "Final price inside 10%–90% range": "{:.2%}",
     }
     if list(checks.columns) != list(formats):
         raise ValueError("forecast-check display received unexpected columns")
@@ -1010,6 +1010,8 @@ def forecast_skill_snapshot(metrics):
             - univariate["directional_accuracy"]
         ),
         "return_mae": multivariate_mae,
+        "univariate_return_mae": univariate_mae,
+        "last_value_return_mae": baseline_mae,
         "mae_improvement_vs_univariate": 1.0 - multivariate_mae / univariate_mae,
         "mae_improvement_vs_last_value": 1.0 - multivariate_mae / baseline_mae,
         "interval_80_coverage": float(multivariate["interval_80_coverage"]),
@@ -1031,6 +1033,11 @@ def forecast_portfolio_comparison(study):
     reference = study.backtests[benchmark].metrics
     return {
         "benchmark": benchmark,
+        "start": pd.Timestamp(forecast_periods.min()),
+        "end": pd.Timestamp(
+            study.backtests[VOL_FORECAST_LABEL]
+            .periods.loc[forecast_periods.max(), "period_end_date"]
+        ),
         "forecast_return": float(forecast["annualized_return"]),
         "benchmark_return": float(reference["annualized_return"]),
         "return_delta": float(
@@ -1054,38 +1061,25 @@ def forecast_portfolio_comparison(study):
     }
 
 
-def forecast_portfolio_verdict(comparison):
-    """State a deliberately restrained conclusion from the selected-range results."""
-    required = (
-        "return_delta",
-        "sharpe_delta",
-        "drawdown_improvement",
-        "turnover_delta",
-    )
-    if not all(np.isfinite(float(comparison[name])) for name in required):
-        return (
-            f"The selected history is too short to calculate a complete Forecast "
-            f"versus {comparison['benchmark']} verdict. Extend the historical range "
-            "before interpreting portfolio value."
-        )
-    return_better = comparison["return_delta"] > 0.0
-    sharpe_better = comparison["sharpe_delta"] > 0.0
-    drawdown_better = comparison["drawdown_improvement"] > 0.0
-    if return_better and sharpe_better:
-        lead = "The forecast filter improved both return and risk-adjusted return"
-    elif drawdown_better and not (return_better and sharpe_better):
-        lead = "The evidence is mixed: the forecast filter reduced the worst drawdown"
-    else:
-        lead = "The forecast filter did not improve return, Sharpe, or the worst drawdown"
-    return (
-        f"{lead} versus {comparison['benchmark']} over this selected history. "
-        f"Annualized return changed by {comparison['return_delta'] * 100:+.2f} "
-        f"percentage points, Sharpe by {comparison['sharpe_delta']:+.2f}, the "
-        f"maximum-drawdown result by {comparison['drawdown_improvement'] * 100:+.2f} "
-        f"percentage points, and annualized turnover by "
-        f"{comparison['turnover_delta'] * 100:+.2f} percentage points. This is "
-        "descriptive historical replay, "
-        "not evidence that the model will add value live."
+def forecast_portfolio_table(comparison):
+    """Return a small side-by-side portfolio table for the TimesFM section."""
+    return pd.DataFrame(
+        [
+            {
+                "Portfolio": "Forecast",
+                "Annualized return": comparison["forecast_return"],
+                "Sharpe above cash": comparison["forecast_sharpe"],
+                "Maximum drawdown": comparison["forecast_drawdown"],
+                "Annualized turnover": comparison["forecast_turnover"],
+            },
+            {
+                "Portfolio": comparison["benchmark"],
+                "Annualized return": comparison["benchmark_return"],
+                "Sharpe above cash": comparison["benchmark_sharpe"],
+                "Maximum drawdown": comparison["benchmark_drawdown"],
+                "Annualized turnover": comparison["benchmark_turnover"],
+            },
+        ]
     )
 
 
@@ -1195,14 +1189,14 @@ def _line_chart(study, labels, column, title, percent=False):
 
 
 def _forecast_replay_chart(replay, ticker):
-    """Plot forecast, realized return, and the contemporaneous cash hurdle."""
+    """Plot the forecast, result, and cash return for each completed month."""
     figure = go.Figure()
     figure.add_trace(
         go.Scatter(
             x=replay["period_end_date"],
             y=replay["actual_holding_return"],
             mode="lines",
-            name="Realized ETF return",
+            name="ETF return",
             line=dict(color="#17211f", width=2),
             hovertemplate="%{x|%b %Y}<br>%{y:+.2%}<extra>Realized</extra>",
         )
@@ -1212,7 +1206,7 @@ def _forecast_replay_chart(replay, ticker):
             x=replay["period_end_date"],
             y=replay["forecast_holding_return"],
             mode="lines",
-            name="TimesFM median forecast",
+            name="TimesFM-3 forecast return",
             line=dict(color="#0c6148", width=2),
             hovertemplate="%{x|%b %Y}<br>%{y:+.2%}<extra>Forecast</extra>",
         )
@@ -1222,14 +1216,14 @@ def _forecast_replay_chart(replay, ticker):
             x=replay["period_end_date"],
             y=replay["cash_hurdle"],
             mode="lines",
-            name="Cash hurdle",
+            name="Cash return",
             line=dict(color="#b6782f", width=1.5, dash="dot"),
-            hovertemplate="%{x|%b %Y}<br>%{y:.2%}<extra>Cash hurdle</extra>",
+            hovertemplate="%{x|%b %Y}<br>%{y:.2%}<extra>Cash return</extra>",
         )
     )
     figure.add_hline(y=0.0, line_width=1, line_color="rgba(23,33,31,0.25)")
     figure.update_layout(
-        title=f"{ticker}: one-month forecast versus realized return",
+        title=f"{ticker}: one-month forecast and result",
         height=360,
         margin=dict(l=10, r=10, t=50, b=10),
         paper_bgcolor="rgba(0,0,0,0)",
@@ -1428,17 +1422,16 @@ def render_workbench(
     """Render the isolated first-tab workbench and populate Portfolio Lab state."""
     st.markdown("## ETF Allocation Workbench")
     st.write(
-        "Build and compare a simple ETF portfolio, test a TimesFM-3 forecast filter, "
-        "see what each approach would hold, and turn one current proposal into a "
-        "rebalance checklist."
+        "Select ETFs, compare portfolio rules, review the latest weights, and create "
+        "a rebalance plan from your current portfolio."
     )
     guide = st.columns(3)
     guide[0].info("**1 · Choose ETFs**\n\nSelect one to eight investments to study.")
     guide[1].info(
-        "**2 · Compare approaches**\n\nSee whether TimesFM changed results or merely added turnover."
+        "**2 · Compare portfolios**\n\nReview each rule on the same dates and costs."
     )
     guide[2].info(
-        "**3 · Rebalance (optional)**\n\nEnter current weights totaling 100%, then send a proposal to Portfolio Lab."
+        "**3 · Build a rebalance plan**\n\nEnter current weights, then send one target to Portfolio Lab."
     )
     try:
         bundle = load_cached_bundle(bundle_path)
@@ -1577,13 +1570,13 @@ def render_workbench(
         unavailable_tactical.append("TimesFM")
     if unavailable_tactical:
         st.info(
-            "Historical analysis is ready. The latest "
+            "The latest "
             + " and ".join(unavailable_tactical)
             + " tactical target"
             + ("s are" if len(unavailable_tactical) > 1 else " is")
-            + " research-only because this artifact snapshot missed or has not yet "
-            "reached its intended rebalance close. You can inspect and download the "
-            "target, but only a current or constant target can be sent to Portfolio Lab."
+            + " outside the current rebalance window. Historical charts and target "
+            "downloads remain available. Portfolio Lab accepts current signals and "
+            "fixed portfolios."
         )
 
     options = available_comparisons(
@@ -1657,15 +1650,14 @@ def render_workbench(
         return None
     start, end = date_range
     alignment_text = (
-        "Because the forecast comparison is selected, every displayed line uses "
-        "the same completed TimesFM replay periods."
+        "All displayed lines use the completed TimesFM forecast dates."
         if forecast_selected
-        else "Forecast is not selected, so standard approaches keep their longer native history."
+        else "The standard approaches use their full common history."
     )
     st.caption(
-        "Historical-range rule: every selected range restarts at $1 in analytical "
-        "cash. The first move into ETFs counts toward turnover and transaction cost. "
-        "Changing this range does not change the latest proposed target. "
+        "Each selected range starts at $1 in cash. The first ETF purchase counts as "
+        "turnover and has a transaction cost. The date range changes the chart only; "
+        "it does not change the latest target. "
         + alignment_text
     )
     if len(selected) == 1:
@@ -1690,40 +1682,27 @@ def render_workbench(
         "ETFs are reweighted within the position limit, and any amount that cannot "
         "be assigned goes to analytical cash. The other lines are reference portfolios."
     )
-    with st.expander("How the approaches, timing, and position limit work"):
+    with st.expander("Portfolio rule summary"):
         st.markdown(
             f"""
-            - **{VOL_BALANCED_LABEL}:** gives lower-volatility ETFs more weight using
-              the previous 126 trading days. It does not use correlations, trend, or
-              a return forecast.
-            - **{VOL_TREND_LABEL}:** first requires an ETF's completed month-end price
-              to be strictly above its trailing 10-month average, then applies the
-              same inverse-volatility weighting. ETFs that fail receive 0%; passing
-              ETFs are reweighted subject to the position limit, and any unassigned
-              amount goes to analytical cash.
-            - **{VOL_FORECAST_LABEL}:** uses the TimesFM-3 median forecast only as an
-              eligibility gate. An ETF must forecast a higher holding-period return than
-              analytical cash; eligible ETFs receive the same volatility-balanced weights.
-              Forecast magnitude never increases an ETF's weight.
-            - **{EQUAL_WEIGHT_LABEL}:** gives every selected ETF the same weight and
-              resets it monthly; it uses neither volatility nor trend.
-            - **{CURRENT_MIX_LABEL}:** resets the exact weights you entered each month
-              for comparison. It does not reconstruct your actual transaction history.
-            - **Timing:** completed month-end information sets the target for the next
-              trading close, which is held until the following monthly rebalance.
-            - **Position limit:** No ETF can receive more than 150% of its equal-weight
-              share. With {len(selected)} selected ETF{'s' if len(selected) != 1 else ''},
-              equal weight is {equal_share:.1%} and the maximum is {cap:.1%}.
-
-            Volatility and trend use recorded prices. TimesFM is a model forecast,
-            shown only as a research comparison. None of these approaches promises
-            better future returns.
+            - **{VOL_BALANCED_LABEL}:** Lower-volatility ETFs receive more weight.
+            - **{VOL_TREND_LABEL}:** An ETF receives weight only when its price is
+              above its 10-month average.
+            - **{VOL_FORECAST_LABEL}:** An ETF receives weight only when its TimesFM-3
+              forecast return is above the cash return for the same month.
+            - **{EQUAL_WEIGHT_LABEL}:** Each selected ETF receives the same weight.
+            - **{CURRENT_MIX_LABEL}:** The entered weights reset each month for the
+              historical comparison.
+            - **Timing:** A completed month-end signal sets the target for the next
+              trading close.
+            - **Position limit:** With {len(selected)} selected ETF{'s' if len(selected) != 1 else ''},
+              equal weight is {equal_share:.1%} and the maximum ETF weight is {cap:.1%}.
             """
         )
-        st.caption(
-            "TimesFM results are historical replay research, not a live out-of-sample "
-            "claim. Whether the model's pretraining data overlaps these ETF periods is "
-            "unknown. This workbench is research, not investment advice."
+        st.markdown(
+            "[Read the formulas, timing, cash method, and metric definitions]"
+            "(https://github.com/sabdulmajid/ml-etf-rebalancer/blob/master/"
+            "docs/research/etf-allocation.md)."
         )
 
     try:
@@ -1752,73 +1731,98 @@ def render_workbench(
             latest_forecast["asset"] != CASH_LABEL
         ].copy()
         skill = forecast_skill_snapshot(forecast_bundle.metrics)
-        title_status = (
-            "current"
-            if forecast_freshness["latest_target_status"] == "current"
-            else "historical research only"
-        )
         st.divider()
-        st.markdown("## TimesFM-3 research lab")
+        st.markdown("## TimesFM-3 Forecast Analysis")
         st.write(
-            "See the model's latest ETF-versus-cash decisions, test whether using all "
-            "14 ETF histories helped, and audit past forecasts against what happened."
+            "TimesFM-3 reads recent ETF prices and estimates each ETF's price one "
+            "month ahead. The portfolio holds an ETF when its median forecast return "
+            "is above cash. Volatility Balanced then sets the ETF weights."
         )
-        scorecards = st.columns(4)
+        st.markdown(
+            "**1. Read prices.** All 14 ETF histories enter the model together.  "
+            "**2. Estimate next month.** The model produces a median price path and "
+            "a range of possible final prices.  "
+            "**3. Set weights.** ETFs forecast above cash can receive a weight."
+        )
+        st.markdown(
+            "[Read the TimesFM-3 inputs, formulas, and evaluation measures]"
+            "(https://github.com/sabdulmajid/ml-etf-rebalancer/blob/master/"
+            "docs/research/timesfm-3.md)."
+        )
+        scorecard_row_one = st.columns(2)
+        scorecard_row_two = st.columns(2)
+        scorecards = (*scorecard_row_one, *scorecard_row_two)
         scorecards[0].metric(
-            "Forecasts checked",
+            "ETF-month forecasts",
             f"{skill['observations']:,}",
         )
-        scorecards[0].caption("14 ETFs · completed months")
+        scorecards[0].caption("Completed forecasts with a known result.")
         scorecards[1].metric(
-            "Up/down accuracy",
+            "Correct up-or-down calls",
             f"{skill['directional_accuracy']:.1%}",
         )
         scorecards[1].caption(
-            f"{skill['directional_lift_vs_univariate'] * 100:+.1f} pts vs one-series model"
+            "The median forecast called the return direction correctly."
         )
         scorecards[2].metric(
-            "Typical return error",
+            "Average forecast difference",
             f"{skill['return_mae']:.2%}",
         )
         scorecards[2].caption(
-            f"{skill['mae_improvement_vs_univariate']:.1%} lower than one-series model"
+            "Average gap between forecast and realized one-month return."
         )
         scorecards[3].metric(
-            "80% price-band coverage",
+            "Final prices inside range",
             f"{skill['interval_80_coverage']:.1%}",
         )
-        scorecards[3].caption("ideal calibration would be near 80%")
+        scorecards[3].caption("Share inside the model's 10%–90% price range.")
         st.caption(
-            "Cross-series result: using all ETF histories lowered return error by "
-            f"{skill['mae_improvement_vs_univariate']:.1%} and changed direction "
-            f"accuracy by {skill['directional_lift_vs_univariate'] * 100:+.1f} "
-            "percentage points versus forecasting each ETF alone—a modest, not "
-            "decisive, gain."
+            "Joint-input comparison: using all 14 ETF histories produced "
+            f"{skill['directional_accuracy']:.1%} correct directions and a "
+            f"{skill['return_mae']:.2%} average return difference. Using one ETF "
+            f"history at a time produced {skill['univariate_directional_accuracy']:.1%} "
+            f"and {skill['univariate_return_mae']:.2%}, respectively."
         )
         if forecast_selected:
             portfolio_comparison = forecast_portfolio_comparison(study)
-            st.info(forecast_portfolio_verdict(portfolio_comparison))
+            st.markdown("### Forecast Portfolio Comparison")
             st.caption(
-                "The portfolio verdict compares Forecast with Buy & Hold for one ETF, "
-                "or Equal Weight for several ETFs, over the exact history selected above. "
-                f"Against the simple last-value forecast, TimesFM's return MAE was "
-                f"{skill['mae_improvement_vs_last_value']:.1%} lower."
+                f"{portfolio_comparison['start'].date()} through "
+                f"{portfolio_comparison['end'].date()} · same dates and transaction "
+                "cost for both portfolios. The one-ETF reference is Buy & Hold. The "
+                "multi-ETF reference is Equal Weight."
+            )
+            st.dataframe(
+                forecast_portfolio_table(portfolio_comparison).style.format(
+                    {
+                        "Annualized return": "{:.2%}",
+                        "Sharpe above cash": "{:.2f}",
+                        "Maximum drawdown": "{:.2%}",
+                        "Annualized turnover": "{:.2%}",
+                    },
+                    na_rep="—",
+                ),
+                hide_index=True,
+                width="stretch",
+            )
+            st.caption(
+                "The last-observed-price reference had a "
+                f"{skill['last_value_return_mae']:.2%} average return difference."
             )
         else:
             st.info(
-                "Add Forecast filter under Comparison series to calculate an "
-                "apples-to-apples portfolio verdict for the selected history."
+                "Select Forecast under Comparison series to add its portfolio results "
+                "for the chosen dates."
             )
 
-        st.markdown(f"### Latest recorded forecast · {title_status}")
+        st.markdown("### Latest Available TimesFM-3 Signal")
         st.write(
-            "An ETF qualifies only when TimesFM's median one-month return forecast "
-            "is above the known overnight-cash hurdle. Forecast size does not set "
-            "the weight; qualifying ETFs are weighted by trailing volatility."
+            "The table compares each ETF's one-month forecast with cash for the same "
+            "period. A passing ETF can receive a Volatility Balanced weight."
         )
         st.caption(
-            f"Signal {forecast_result.latest_signal_date.date()} · intended execution "
-            f"{forecast_result.latest_execution_date.date()} · holding period ends "
+            f"Prices read through {forecast_result.latest_signal_date.date()} · target "
+            f"date {forecast_result.latest_execution_date.date()} · period ends "
             f"{forecast_result.latest_period_end_date.date()}"
         )
         forecast_display = forecast_etfs[
@@ -1834,21 +1838,21 @@ def render_workbench(
             columns={
                 "asset": "ETF",
                 "role": "Role",
-                "median_forecast_return": "Median one-month forecast",
-                "cash_hurdle": "Cash hurdle",
-                "forecast_status": "Decision",
-                "final_weight": "Research target",
+                "median_forecast_return": "Forecast one-month return",
+                "cash_hurdle": "Cash one-month return",
+                "forecast_status": "Portfolio rule",
+                "final_weight": "Target weight",
             }
         )
-        forecast_display["Decision"] = forecast_display["Decision"].replace(
-            {"Eligible": "ETF eligible", "Held in cash": "Use cash instead"}
+        forecast_display["Portfolio rule"] = forecast_display["Portfolio rule"].replace(
+            {"Eligible": "Use ETF", "Held in cash": "Use cash for this share"}
         )
         st.dataframe(
             forecast_display.style.format(
                 {
-                    "Median one-month forecast": "{:+.2%}",
-                    "Cash hurdle": "{:.2%}",
-                    "Research target": "{:.2%}",
+                    "Forecast one-month return": "{:+.2%}",
+                    "Cash one-month return": "{:.2%}",
+                    "Target weight": "{:.2%}",
                 },
                 na_rep="—",
             ),
@@ -1856,7 +1860,7 @@ def render_workbench(
             width="stretch",
         )
 
-        with st.expander("Audit past TimesFM forecasts", expanded=False):
+        with st.expander("Review completed forecasts", expanded=False):
             replay_key = "wb_forecast_replay_ticker"
             if st.session_state.get(replay_key) not in (None, *selected):
                 st.session_state.pop(replay_key, None)
@@ -1877,38 +1881,40 @@ def render_workbench(
                 st.info(str(exc))
             else:
                 replay_stats = forecast_replay_summary(replay)
-                replay_cards = st.columns(3)
+                replay_row_one = st.columns(2)
+                replay_row_two = st.columns(2)
+                replay_cards = (*replay_row_one, replay_row_two[0])
                 replay_cards[0].metric(
-                    "Cash-vs-ETF calls correct",
+                    "Correct ETF-or-cash decisions",
                     f"{replay_stats['cash_gate_accuracy']:.1%}",
                 )
                 replay_cards[0].caption(
-                    f"{replay_stats['observations']} completed months"
+                    f"{replay_stats['observations']} completed months in this chart."
                 )
                 replay_cards[1].metric(
-                    "Typical return error",
+                    "Average forecast difference",
                     f"{replay_stats['return_mae']:.2%}",
                 )
-                replay_cards[1].caption("mean absolute one-month error")
+                replay_cards[1].caption("Average forecast-to-result gap.")
                 replay_cards[2].metric(
-                    "80% price-band coverage",
+                    "Final prices inside range",
                     f"{replay_stats['interval_80_coverage']:.1%}",
                 )
-                replay_cards[2].caption("share of outcomes inside q10–q90")
+                replay_cards[2].caption("Share inside the 10%–90% price range.")
                 _forecast_replay_chart(replay, replay_ticker)
                 st.caption(
-                    "A cash-vs-ETF call is correct when the model correctly identifies "
-                    "whether the ETF's realized holding return beats the cash hurdle. "
-                    "Hover the chart to inspect individual months."
+                    "A decision is correct when the model selects the asset with the "
+                    "higher realized return: the ETF or cash. Hover over the chart to "
+                    "review a month."
                 )
 
         with st.expander(
-            "Forecast uncertainty, provenance, and allocation history",
+            "Forecast range, dates, and allocation history",
             expanded=False,
         ):
             st.caption(
-                "The multivariate model always receives the histories of all 14 curated "
-                "ETFs together, even when you select only one ETF for allocation."
+                "The model receives all 14 ETF histories together. Your ETF selection "
+                "controls the portfolio, not the model input."
             )
             st.caption(
                 f"Signal {forecast_result.latest_signal_date.date()} · intended "
@@ -1931,19 +1937,25 @@ def render_workbench(
             ].rename(
                 columns={
                     "asset": "ETF",
-                    "q10_period_end_price": "q10 price",
-                    "q50_period_end_price": "q50 price",
-                    "q90_period_end_price": "q90 price",
+                    "q10_period_end_price": "10% lower price",
+                    "q50_period_end_price": "Median price",
+                    "q90_period_end_price": "90% upper price",
                 }
             )
             st.caption(
-                "Period-end price uncertainty: q10, q50, and q90 are separate "
-                "marginal price forecasts for the holding-period end. They are not "
-                "a calibrated holding-return interval."
+                "The 10% price is the lower estimate, the 50% price is the median, and "
+                "the 90% price is the upper estimate for the end of the period."
             )
             st.dataframe(
                 price_display.style.format(
-                    {name: "{:,.2f}" for name in ("q10 price", "q50 price", "q90 price")}
+                    {
+                        name: "{:,.2f}"
+                        for name in (
+                            "10% lower price",
+                            "Median price",
+                            "90% upper price",
+                        )
+                    }
                 ),
                 hide_index=True,
                 width="stretch",
@@ -1972,16 +1984,15 @@ def render_workbench(
                 key="wb_forecast_allocation_download",
             )
             st.caption(
-                "Historical replay only · pretraining overlap unknown · no local "
-                "fine-tuning · no runtime model or network call · not investment advice."
+                "The displayed history uses completed monthly forecasts and the same "
+                "portfolio accounting as the other workbench lines."
             )
-        with st.expander("Historical TimesFM forecast checks", expanded=False):
+        with st.expander("Compare forecast methods", expanded=False):
             st.caption(
-                "These diagnostics evaluate forecasts, not portfolio returns. Lower "
-                "return MAE, price MASE, and pinball loss are better; direction "
-                "accuracy and price "
-                "coverage should be read with the historical-replay and unknown-"
-                "pretraining-overlap caveats."
+                "Average return difference measures the forecast-to-result gap. Scaled "
+                "final-price difference compares the price gap with a normal one-session "
+                "price move. Probability forecast difference scores all nine forecast "
+                "percentiles. Lower values indicate a smaller difference."
             )
             checks = forecast_check_summary(forecast_bundle.metrics)
             st.dataframe(
@@ -1990,9 +2001,8 @@ def render_workbench(
                 width="stretch",
             )
             st.caption(
-                "The last-value row is a point baseline, so its direction and "
-                "probabilistic fields are intentionally blank. Historical replay is "
-                "not proof of live forecasting skill or investment value."
+                "The last-price reference supplies one price value. Measures that need "
+                "a direction or a forecast range therefore show a dash."
             )
 
     target_options = [

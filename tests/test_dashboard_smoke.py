@@ -61,8 +61,8 @@ def test_streamlit_workbench_transfer_survives_rerun_and_uses_exact_target(
     ]
     info_text = " ".join(str(item.value) for item in app.info)
     assert "1 · Choose ETFs" in info_text
-    assert "2 · Compare approaches" in info_text
-    assert "3 · Rebalance (optional)" in info_text
+    assert "2 · Compare portfolios" in info_text
+    assert "3 · Build a rebalance plan" in info_text
     explanation = app.table[0].value
     assert explanation.columns.tolist() == [
         "Asset",
@@ -198,30 +198,30 @@ def test_late_forecast_history_is_visible_but_target_is_not_transferable(monkeyp
     assert app.button(key="wb_send_to_portfolio_lab_disabled").disabled
     assert "portfolio_lab_transfer" not in app.session_state
     assert any(
-        "Historical analysis is ready" in item.value
+        "outside the current rebalance window" in item.value
         and "TimesFM" in item.value
         for item in app.info
     )
     assert any(
-        "forecast uncertainty" in expander.label.lower()
+        "forecast range" in expander.label.lower()
         for expander in app.expander
     )
     assert any(
-        "TimesFM-3 research lab" in item.value for item in app.markdown
+        "TimesFM-3 Forecast Analysis" in item.value for item in app.markdown
     )
     metric_labels = {item.label for item in app.metric}
     assert {
-        "Forecasts checked",
-        "Up/down accuracy",
-        "Typical return error",
-        "80% price-band coverage",
+        "ETF-month forecasts",
+        "Correct up-or-down calls",
+        "Average forecast difference",
+        "Final prices inside range",
     }.issubset(metric_labels)
     forecast_checks = next(
         item.value
         for item in app.dataframe
-        if "Pinball loss ↓" in item.value.columns
+        if "Probability forecast difference ↓" in item.value.columns
     )
-    assert "—" in forecast_checks["Pinball loss ↓"].tolist()
+    assert "—" in forecast_checks["Probability forecast difference ↓"].tolist()
     assert not forecast_checks.map(lambda value: value is None).any().any()
     assert not forecast_checks.astype(str).eq("None").any().any()
     assert not app.exception
