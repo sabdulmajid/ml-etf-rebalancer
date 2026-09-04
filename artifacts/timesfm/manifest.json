@@ -1,6 +1,6 @@
 {
   "schema_version": "timesfm-research-bundle-v1",
-  "generated_at_utc": "2026-09-04T04:58:07.541575Z",
+  "generated_at_utc": "2026-09-04T04:58:20.579558Z",
   "artifact_kind": "timesfm3-zero-shot-research",
   "publication_allowed": true,
   "model_execution_status": "complete",
@@ -80,7 +80,7 @@
     "huggingface-hub": "1.30.0",
     "safetensors": "0.8.0"
   },
-  "git_sha": "cff07d380320b1b78b9706157f0041c5bf039458",
+  "git_sha": "18ecb10444dbe992c33629223651c36f01db34bb",
   "git_dirty_at_build": false,
   "pipeline_version": "timesfm-artifact-builder-v1",
   "runtime": {
