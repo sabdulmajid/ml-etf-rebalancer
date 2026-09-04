@@ -129,6 +129,7 @@ def test_standard_tactical_target_uses_intended_close_without_future_price_row(b
     assert late["latest_execution_date"] == "2026-09-01"
     assert late["latest_execution_cutoff_utc"] == "2026-09-01T20:00:00Z"
     assert late["latest_period_end_date"] == "2026-10-01"
+    assert late["latest_period_end_cutoff_utc"] == "2026-10-01T20:00:00Z"
     assert "after its intended execution close" in late["reason"]
 
     timely_manifest = deepcopy(bundle.manifest)
@@ -143,6 +144,14 @@ def test_standard_tactical_target_uses_intended_close_without_future_price_row(b
     assert before_close["latest_target_status"] == "scheduled"
     assert "execution close" in before_close["reason"]
     assert after_close["latest_target_status"] == "current"
+    before_period_end_close = standard_target_freshness(
+        timely_bundle, allocation, as_of="2026-10-01T19:59:00Z"
+    )
+    after_period_end_close = standard_target_freshness(
+        timely_bundle, allocation, as_of="2026-10-01T20:01:00Z"
+    )
+    assert before_period_end_close["latest_target_status"] == "current"
+    assert after_period_end_close["latest_target_status"] == "disabled"
 
 
 def test_selected_comparisons_control_forecast_history_alignment(bundle):

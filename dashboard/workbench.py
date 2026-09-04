@@ -512,6 +512,9 @@ def standard_target_freshness(bundle, allocation, as_of=None):
     execution_close = pd.Timestamp(calendar.session_close(execution_date))
     if execution_close.tz is not None:
         execution_close = execution_close.tz_convert("UTC").tz_localize(None)
+    period_end_close = pd.Timestamp(calendar.session_close(period_end_date))
+    if period_end_close.tz is not None:
+        period_end_close = period_end_close.tz_convert("UTC").tz_localize(None)
     generated_at = pd.Timestamp(bundle.manifest["generated_at_utc"])
     if generated_at.tz is not None:
         generated_at = generated_at.tz_convert("UTC").tz_localize(None)
@@ -523,7 +526,7 @@ def standard_target_freshness(bundle, allocation, as_of=None):
             "disabled",
             "target artifact was generated after its intended execution close",
         )
-    elif as_of_stamp > period_end_date:
+    elif as_of_stamp > period_end_close:
         status, reason = "disabled", "latest target holding period has expired"
     elif as_of_stamp < execution_close:
         status, reason = (
@@ -539,6 +542,7 @@ def standard_target_freshness(bundle, allocation, as_of=None):
         "latest_execution_date": str(execution_date.date()),
         "latest_execution_cutoff_utc": execution_close.isoformat() + "Z",
         "latest_period_end_date": str(period_end_date.date()),
+        "latest_period_end_cutoff_utc": period_end_close.isoformat() + "Z",
         "bundle_refreshed_at_utc": generated_at.isoformat() + "Z",
     }
 
