@@ -239,7 +239,16 @@ def test_incremental_build_reuses_matching_mode_signal_groups(
     ]
 
 
-def test_policy_digest_mismatch_forces_regeneration(tmp_path, monkeypatch, workbench):
+@pytest.mark.parametrize(
+    ("manifest_field", "bad_value"),
+    [
+        ("model_policy_sha256", "0" * 64),
+        ("pipeline_version", "obsolete-builder-policy"),
+    ],
+)
+def test_policy_mismatch_forces_regeneration(
+    tmp_path, monkeypatch, workbench, manifest_field, bad_value
+):
     monkeypatch.setattr(builder, "_git_sha", lambda: "e" * 40)
     monkeypatch.setattr(builder, "_git_dirty", lambda: True)
     output = tmp_path / "timesfm"
@@ -253,7 +262,7 @@ def test_policy_digest_mismatch_forces_regeneration(tmp_path, monkeypatch, workb
     )
     manifest_path = output / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
-    manifest["model_policy_sha256"] = "0" * 64
+    manifest[manifest_field] = bad_value
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 
     replacement_runner = FakeRunner()
@@ -454,7 +463,9 @@ def test_validator_rejects_tampered_metric(tmp_path, monkeypatch, workbench):
         pd.read_csv(output / "forecast_signals.csv", float_precision="round_trip")
     )
     model_row = metrics["model_mode"] == MULTIVARIATE_MODE
-    metrics.loc[model_row & (metrics["scope"] == "overall"), "mean_pinball_loss"] = np.nan
+    metrics.loc[
+        model_row & (metrics["scope"] == "overall"), "mean_pinball_loss"
+    ] = np.nan
     metrics.to_csv(output / "forecast_metrics.csv", index=False, float_format="%.17g")
     _rewrite_manifest_checksums(output)
     with pytest.raises(
