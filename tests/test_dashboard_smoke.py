@@ -36,7 +36,7 @@ def test_dashboard_executes_in_bare_mode():
 def test_streamlit_workbench_transfer_survives_rerun_and_uses_exact_target(
     monkeypatch,
 ):
-    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-08-02")
+    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
 
     def no_http(*args, **kwargs):
         raise AssertionError("Streamlit runtime attempted public HTTP")
@@ -118,7 +118,7 @@ def test_streamlit_workbench_transfer_survives_rerun_and_uses_exact_target(
 
 
 def test_portfolio_lab_currency_summary_escapes_streamlit_markdown(monkeypatch):
-    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-08-02")
+    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
     app = AppTest.from_file(
         str(ROOT / "dashboard" / "app.py"), default_timeout=20
     ).run()
@@ -134,7 +134,7 @@ def test_portfolio_lab_currency_summary_escapes_streamlit_markdown(monkeypatch):
 
 
 def test_streamlit_selection_reconciliation_and_invalid_current_controls(monkeypatch):
-    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-08-02")
+    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
     app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=20).run()
     app.checkbox(key="wb_current_enabled").set_value(True).run()
     assert any("Current total: 100.00%" in item.value for item in app.success)
@@ -168,7 +168,7 @@ def test_streamlit_selection_reconciliation_and_invalid_current_controls(monkeyp
 
 
 def test_comparison_defaults_follow_selected_etf_tuple(monkeypatch):
-    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-08-02")
+    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
     app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=20).run()
 
     initial = next(widget for widget in app.multiselect if widget.label == "Comparison series")
@@ -193,8 +193,8 @@ def test_comparison_defaults_follow_selected_etf_tuple(monkeypatch):
 @pytest.mark.parametrize(
     ("as_of", "element", "text"),
     [
-        ("2026-09-15", "warning", "one completed month behind"),
-        ("2026-10-15", "error", "two or more completed months behind"),
+        ("2026-10-15", "warning", "one completed month behind"),
+        ("2026-11-15", "error", "two or more completed months behind"),
     ],
 )
 def test_streamlit_freshness_warning_and_disabled_state(monkeypatch, as_of, element, text):
@@ -219,7 +219,7 @@ st.write('ML sentinel remains available')
 def test_workbench_data_failure_is_isolated_from_other_app_content(
     tmp_path, monkeypatch, kind
 ):
-    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-08-02")
+    monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
     bundle_path = tmp_path / "workbench"
     if kind == "corrupt":
         import shutil
