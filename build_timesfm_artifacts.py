@@ -24,6 +24,7 @@ import pandas as pd
 from data.timesfm import (
     BUNDLE_SCHEMA_VERSION,
     DEFAULT_BUNDLE_PATH,
+    PIPELINE_VERSION,
     PUBLIC_FILENAMES,
     SIGNAL_COLUMNS,
     validate_timesfm_bundle,
@@ -45,10 +46,9 @@ from forecasting.timesfm import (
     TimesFM3Runner,
     build_forecast_windows,
     last_value_forecast,
+    model_policy,
+    model_policy_sha256,
 )
-
-
-PIPELINE_VERSION = "timesfm-artifact-builder-v1"
 
 
 def _git_sha():
@@ -120,7 +120,7 @@ def _actual_outcome(prices, execution_date, period_end_date, ticker):
     return execution, period_end, period_end / execution - 1.0, "realized"
 
 
-def _forecast_rows(window, mode, values, cash_index, prices):
+def _forecast_rows(window, mode, generation_id, values, cash_index, prices):
     expected_shape = (
         len(window.context.columns),
         window.horizon,
@@ -140,6 +140,7 @@ def _forecast_rows(window, mode, values, cash_index, prices):
         context = window.context[ticker].to_numpy(dtype=float)
         row = {
             "model_mode": mode,
+            "model_generation_id": generation_id,
             "signal_date": window.signal_date,
             "execution_date": window.execution_date,
             "period_end_date": window.period_end_date,
@@ -179,7 +180,7 @@ def _forecast_rows(window, mode, values, cash_index, prices):
     return rows
 
 
-def _reusable_rows(existing, window, mode, rate_details):
+def _reusable_rows(existing, window, mode, rate_details, generation_ids):
     if existing is None:
         return None
     mask = (existing["model_mode"] == mode) & (
@@ -190,7 +191,9 @@ def _reusable_rows(existing, window, mode, rate_details):
         return None
     rate_date, rate_source, annual_rate, hurdle = rate_details
     checks = (
-        (rows["context_sha256"] == window.context_sha256).all()
+        set(rows["model_generation_id"]).issubset(generation_ids)
+        and len(set(rows["model_generation_id"])) == 1
+        and (rows["context_sha256"] == window.context_sha256).all()
         and (rows["execution_date"] == window.execution_date).all()
         and (rows["period_end_date"] == window.period_end_date).all()
         and (rows["horizon_sessions"] == window.horizon).all()
@@ -206,6 +209,12 @@ def _reusable_rows(existing, window, mode, rate_details):
 def _load_incremental_source(output_dir, full):
     output_dir = Path(output_dir)
     if full or not output_dir.exists():
+        return None
+    manifest = json.loads((output_dir / "manifest.json").read_text())
+    if (
+        manifest.get("pipeline_version") != PIPELINE_VERSION
+        or manifest.get("model_policy_sha256") != model_policy_sha256()
+    ):
         return None
     return validate_timesfm_bundle(output_dir, require_clean=False)
 
@@ -275,15 +284,40 @@ def build_bundle(
     if git_dirty and not allow_dirty:
         raise RuntimeError("refusing to build release forecasts from a dirty Git tree")
 
+    if generated_at is None:
+        refresh_time = datetime.now(timezone.utc)
+    else:
+        refresh_stamp = pd.Timestamp(generated_at)
+        if refresh_stamp.tz is None:
+            refresh_stamp = refresh_stamp.tz_localize("UTC")
+        else:
+            refresh_stamp = refresh_stamp.tz_convert("UTC")
+        refresh_time = refresh_stamp.to_pydatetime()
+    refresh_iso = refresh_time.isoformat().replace("+00:00", "Z")
+    generation_id = (
+        "timesfm3-"
+        + refresh_time.strftime("%Y%m%dT%H%M%SZ")
+        + "-"
+        + git_sha[:8]
+    )
+
     workbench = load_workbench_bundle(workbench_dir)
     as_of = pd.Timestamp(workbench.manifest["generated_at_utc"])
     windows = build_forecast_windows(workbench.adjusted_close, as_of=as_of)
     existing_bundle = _load_incremental_source(output_dir, full=full)
     existing = None if existing_bundle is None else existing_bundle.signals
+    reusable_generation_ids = {"point-baseline-v1"}
+    if existing_bundle is not None:
+        reusable_generation_ids.update(
+            generation["id"]
+            for generation in existing_bundle.manifest["model_generations"]
+            if generation["model_policy_sha256"] == model_policy_sha256()
+        )
 
     rows = []
     reused_groups = 0
-    generated_groups = 0
+    generated_baseline_groups = 0
+    generated_model_groups = 0
     for window in windows:
         rate_details = _rate_hurdle(
             workbench.cash_index,
@@ -292,7 +326,13 @@ def build_bundle(
             window.period_end_date,
         )
         for mode in MODEL_MODES:
-            reusable = _reusable_rows(existing, window, mode, rate_details)
+            reusable = _reusable_rows(
+                existing,
+                window,
+                mode,
+                rate_details,
+                reusable_generation_ids,
+            )
             if reusable is not None:
                 # Outcomes may have become observable in a refreshed price bundle.
                 reused = []
@@ -314,6 +354,8 @@ def build_bundle(
                 continue
             if mode == LAST_VALUE_MODE:
                 values = last_value_forecast(window)
+                row_generation_id = "point-baseline-v1"
+                generated_baseline_groups += 1
             else:
                 if runner is None:
                     runner = TimesFM3Runner(
@@ -324,69 +366,69 @@ def build_bundle(
                         local_files_only=local_files_only,
                     )
                 values = runner.predict(window, mode)
+                row_generation_id = generation_id
+                generated_model_groups += 1
             rows.extend(
                 _forecast_rows(
                     window,
                     mode,
+                    row_generation_id,
                     values,
                     workbench.cash_index,
                     workbench.adjusted_close,
                 )
             )
-            generated_groups += 1
 
     signals = pd.DataFrame(rows, columns=SIGNAL_COLUMNS)
     signals = signals.sort_values(["model_mode", "signal_date", "ticker"]).reset_index(
         drop=True
     )
     metrics = evaluate_forecasts(signals)
-    performance = {}
-    for mode, mode_rows in signals.groupby("model_mode", sort=True):
+    generated_performance = {}
+    newly_generated = signals.loc[
+        signals["model_generation_id"] == generation_id
+    ]
+    for mode, mode_rows in newly_generated.groupby("model_mode", sort=True):
         timings = mode_rows.drop_duplicates(["model_mode", "signal_date"])[
             "inference_seconds"
         ].to_numpy(dtype=float)
-        performance[mode] = {
+        generated_performance[mode] = {
             "forecast_origins": int(len(timings)),
             "total_inference_seconds": float(timings.sum()),
             "median_inference_seconds": float(np.median(timings)),
             "maximum_inference_seconds": float(timings.max()),
         }
-    if generated_at is None:
-        generated_at = datetime.now(timezone.utc)
-    else:
-        generated_at = pd.Timestamp(generated_at)
-        if generated_at.tz is None:
-            generated_at = generated_at.tz_localize("UTC")
-        else:
-            generated_at = generated_at.tz_convert("UTC")
-        generated_at = generated_at.to_pydatetime()
+    model_generations = (
+        []
+        if existing_bundle is None
+        else list(existing_bundle.manifest["model_generations"])
+    )
+    if generated_model_groups:
+        model_generations.append(
+            {
+                "id": generation_id,
+                "generated_at_utc": refresh_iso,
+                "git_sha": git_sha,
+                "git_dirty_at_build": git_dirty,
+                "dependency_versions": _dependency_versions(),
+                "runtime": {
+                    "device": getattr(runner, "device", "injected-test-runner"),
+                    "builder_peak_rss_kb": int(
+                        resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                    ),
+                },
+                "model_policy_sha256": model_policy_sha256(),
+                "performance": generated_performance,
+            }
+        )
 
     manifest = {
         "schema_version": BUNDLE_SCHEMA_VERSION,
-        "generated_at_utc": generated_at.isoformat().replace("+00:00", "Z"),
         "artifact_kind": "timesfm3-zero-shot-research",
         "publication_allowed": True,
         "model_execution_status": "complete",
-        "checkpoint": {
-            "id": CHECKPOINT_ID,
-            "revision": CHECKPOINT_REVISION,
-            "timesfm_source_revision": TIMESFM_SOURCE_REVISION,
-        },
-        "configuration": {
-            "context_sessions": CONTEXT_SESSIONS,
-            "universe_mode": "all-14-etfs-jointly",
-            "covariates": "none",
-            "fine_tuning": False,
-            "quantile_levels": list(QUANTILE_LEVELS),
-            "holding_score": "q50(period_end) / q50(execution) - 1",
-            "cash_hurdle": (
-                "last overnight-rate effective date strictly before signal; "
-                "Actual/360 over execution-to-period-end calendar days"
-            ),
-            "evaluator": EVALUATOR_POLICY,
-            "primary_mode": MULTIVARIATE_MODE,
-            "per_core_batch_size": 16,
-        },
+        "model_policy": model_policy(),
+        "model_policy_sha256": model_policy_sha256(),
         "model_modes": list(MODEL_MODES),
         "ticker_order": list(workbench.tickers),
         "workbench_input": {
@@ -405,26 +447,19 @@ def build_bundle(
         },
         "forecast_signal_start": str(signals["signal_date"].min().date()),
         "forecast_signal_end": str(signals["signal_date"].max().date()),
-        "dependency_versions": _dependency_versions(),
-        "git_sha": git_sha,
-        "git_dirty_at_build": git_dirty,
         "pipeline_version": PIPELINE_VERSION,
-        "runtime": (
-            existing_bundle.manifest["runtime"]
-            if runner is None and existing_bundle is not None
-            else {
-                "device": getattr(runner, "device", "injected-test-runner"),
-                "builder_peak_rss_kb": int(
-                    resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-                ),
-            }
-        ),
-        "performance": performance,
-        "refresh": {
+        "model_generations": model_generations,
+        "bundle_refresh": {
+            "generated_at_utc": refresh_iso,
+            "git_sha": git_sha,
+            "git_dirty_at_build": git_dirty,
             "mode": "full" if full or existing is None else "incremental",
             "reused_mode_signal_groups": reused_groups,
-            "generated_mode_signal_groups": generated_groups,
+            "generated_baseline_groups": generated_baseline_groups,
+            "generated_model_groups": generated_model_groups,
         },
+        "evaluation_classification": "historical_replay",
+        "pretraining_overlap": "unknown",
         "validation_status": "passed",
     }
 

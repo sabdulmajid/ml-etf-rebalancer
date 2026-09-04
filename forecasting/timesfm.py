@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha256
+import json
 from time import perf_counter
 
 import numpy as np
@@ -18,6 +19,7 @@ CHECKPOINT_ID = "google/timesfm-3.0-pytorch"
 CHECKPOINT_REVISION = "43046b85ec22d584a13f8098c2ed39c889e129c2"
 TIMESFM_SOURCE_REVISION = "aa480150652811e732d87a3c5344b235234104e3"
 CONTEXT_SESSIONS = 512
+PER_CORE_BATCH_SIZE = 16
 QUANTILE_LEVELS = tuple(value / 10.0 for value in range(1, 10))
 LAST_VALUE_MODE = "last_value"
 UNIVARIATE_MODE = "timesfm3_univariate"
@@ -32,6 +34,34 @@ EVALUATOR_POLICY = {
     "use_znorm": False,
     "padding_mode": "none",
 }
+
+
+def model_policy():
+    """Return the complete, versioned inference policy used for reuse checks."""
+    return {
+        "policy_version": "timesfm3-zero-shot-policy-v2",
+        "checkpoint_id": CHECKPOINT_ID,
+        "checkpoint_revision": CHECKPOINT_REVISION,
+        "timesfm_source_revision": TIMESFM_SOURCE_REVISION,
+        "context_sessions": CONTEXT_SESSIONS,
+        "universe_mode": "all-14-etfs-jointly",
+        "covariates": "none",
+        "fine_tuning": False,
+        "quantile_levels": list(QUANTILE_LEVELS),
+        "holding_score": "q50(period_end) / q50(execution) - 1",
+        "cash_hurdle": (
+            "last overnight-rate effective date strictly before signal; "
+            "Actual/360 over execution-to-period-end calendar days"
+        ),
+        "evaluator": EVALUATOR_POLICY,
+        "primary_mode": MULTIVARIATE_MODE,
+        "per_core_batch_size": PER_CORE_BATCH_SIZE,
+    }
+
+
+def model_policy_sha256():
+    payload = json.dumps(model_policy(), sort_keys=True, separators=(",", ":"))
+    return sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _date(value):
@@ -185,7 +215,7 @@ class TimesFM3Runner:
         device=None,
         cache_dir=None,
         local_files_only=False,
-        per_core_batch_size=16,
+        per_core_batch_size=PER_CORE_BATCH_SIZE,
     ):
         try:
             from timesfm3 import ModelConfig, TimesFM3Evaluator

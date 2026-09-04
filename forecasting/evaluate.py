@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from forecasting.timesfm import QUANTILE_LEVELS
+from forecasting.timesfm import LAST_VALUE_MODE, QUANTILE_LEVELS
 
 
 METRIC_COLUMNS = (
@@ -55,19 +55,31 @@ def _metric_row(frame, model_mode, scope, ticker):
     )
 
     origin = frame["signal_price"].to_numpy(dtype=float)
-    pinball_values = []
-    for level in QUANTILE_LEVELS:
-        label = int(round(level * 100))
-        prediction = frame[f"q{label}_period_end_price"].to_numpy(dtype=float)
-        error = actual_end - prediction
-        loss = np.maximum(level * error, (level - 1.0) * error) / origin
-        pinball_values.append(loss)
-    pinball = float(np.mean(np.column_stack(pinball_values)))
-
-    low = frame["q10_period_end_price"].to_numpy(dtype=float)
-    high = frame["q90_period_end_price"].to_numpy(dtype=float)
-    coverage = float(np.mean((actual_end >= low) & (actual_end <= high)))
-    interval_width = float(np.mean((high - low) / origin))
+    point_only = model_mode == LAST_VALUE_MODE
+    if point_only:
+        # A flat forecast is a tie, neither an up nor down prediction.  It also
+        # has no probabilistic forecast, even though repeated point values occupy
+        # the common artifact columns.
+        directional_accuracy = np.nan
+        pinball = np.nan
+        coverage = np.nan
+        interval_width = np.nan
+    else:
+        directional_accuracy = float(
+            np.mean((predicted_return > 0.0) == (actual_return > 0.0))
+        )
+        pinball_values = []
+        for level in QUANTILE_LEVELS:
+            label = int(round(level * 100))
+            prediction = frame[f"q{label}_period_end_price"].to_numpy(dtype=float)
+            error = actual_end - prediction
+            loss = np.maximum(level * error, (level - 1.0) * error) / origin
+            pinball_values.append(loss)
+        pinball = float(np.mean(np.column_stack(pinball_values)))
+        low = frame["q10_period_end_price"].to_numpy(dtype=float)
+        high = frame["q90_period_end_price"].to_numpy(dtype=float)
+        coverage = float(np.mean((actual_end >= low) & (actual_end <= high)))
+        interval_width = float(np.mean((high - low) / origin))
     return {
         "model_mode": model_mode,
         "scope": scope,
@@ -75,15 +87,15 @@ def _metric_row(frame, model_mode, scope, ticker):
         "observations": int(len(frame)),
         "holding_return_mae": float(np.mean(np.abs(return_error))),
         "holding_return_rmse": float(np.sqrt(np.mean(return_error**2))),
-        "directional_accuracy": float(
-            np.mean((predicted_return > 0.0) == (actual_return > 0.0))
-        ),
+        "directional_accuracy": directional_accuracy,
         "period_end_price_mase": mase,
         "mean_pinball_loss": pinball,
         "interval_80_coverage": coverage,
         "mean_interval_80_width": interval_width,
         "mean_cross_sectional_rank_correlation": (
-            _mean_rank_correlation(frame) if scope == "overall" else np.nan
+            _mean_rank_correlation(frame)
+            if scope == "overall" and not point_only
+            else np.nan
         ),
     }
 

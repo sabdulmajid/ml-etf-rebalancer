@@ -12,21 +12,21 @@ import pandas as pd
 
 from data.workbench import DEFAULT_BUNDLE_PATH as DEFAULT_WORKBENCH_PATH
 from data.workbench import canonical_instrument_registry, file_sha256
-from forecasting.evaluate import METRIC_COLUMNS
+from forecasting.evaluate import METRIC_COLUMNS, evaluate_forecasts
 from forecasting.timesfm import (
-    CHECKPOINT_ID,
-    CHECKPOINT_REVISION,
     CONTEXT_SESSIONS,
-    EVALUATOR_POLICY,
     LAST_VALUE_MODE,
     MODEL_MODES,
     MULTIVARIATE_MODE,
     QUANTILE_LEVELS,
-    TIMESFM_SOURCE_REVISION,
+    build_forecast_windows,
+    model_policy,
+    model_policy_sha256,
 )
 
 
-BUNDLE_SCHEMA_VERSION = "timesfm-research-bundle-v1"
+BUNDLE_SCHEMA_VERSION = "timesfm-research-bundle-v2"
+PIPELINE_VERSION = "timesfm-artifact-builder-v2"
 PUBLIC_FILENAMES = ("forecast_signals.csv", "forecast_metrics.csv", "manifest.json")
 DEFAULT_BUNDLE_PATH = Path(__file__).resolve().parents[1] / "artifacts" / "timesfm"
 DATE_COLUMNS = (
@@ -44,6 +44,7 @@ QUANTILE_PRICE_COLUMNS = tuple(
 )
 SIGNAL_COLUMNS = (
     "model_mode",
+    "model_generation_id",
     "signal_date",
     "execution_date",
     "period_end_date",
@@ -84,16 +85,50 @@ class TimesFMResearchBundle:
         latest_date = rows["signal_date"].max()
         return rows.loc[rows["signal_date"] == latest_date].copy()
 
+    def freshness(self, as_of=None):
+        """Separate durable historical availability from latest-target validity."""
+        if as_of is None:
+            as_of = pd.Timestamp.now(tz="UTC")
+        as_of = pd.Timestamp(as_of)
+        if as_of.tz is not None:
+            as_of = as_of.tz_convert("UTC").tz_localize(None)
+        generated = pd.Timestamp(self.manifest["bundle_refresh"]["generated_at_utc"])
+        if generated.tz is not None:
+            generated = generated.tz_convert("UTC").tz_localize(None)
+        latest = self.latest()
+        signal = pd.Timestamp(latest["signal_date"].iloc[0])
+        execution = pd.Timestamp(latest["execution_date"].iloc[0])
+        period_end = pd.Timestamp(latest["period_end_date"].iloc[0])
+        price_as_of = pd.Timestamp(
+            self.manifest["workbench_input"]["price_data_as_of"]
+        )
+        if generated > as_of:
+            status, reason = "disabled", "forecast artifact was generated in the future"
+        elif as_of > period_end:
+            status, reason = "disabled", "latest forecast holding period has expired"
+        elif as_of < execution:
+            status, reason = "scheduled", "latest target awaits its execution date"
+        else:
+            status, reason = "current", None
+        return {
+            "historical_available": True,
+            "latest_target_status": status,
+            "reason": reason,
+            "price_data_as_of": str(price_as_of.date()),
+            "latest_signal_date": str(signal.date()),
+            "latest_execution_date": str(execution.date()),
+            "latest_period_end_date": str(period_end.date()),
+        }
+
 
 def _validate_manifest(manifest, require_clean):
     required = {
         "schema_version",
-        "generated_at_utc",
         "artifact_kind",
         "publication_allowed",
         "model_execution_status",
-        "checkpoint",
-        "configuration",
+        "model_policy",
+        "model_policy_sha256",
         "model_modes",
         "ticker_order",
         "workbench_input",
@@ -101,13 +136,11 @@ def _validate_manifest(manifest, require_clean):
         "forecast_signal_end",
         "row_counts",
         "file_sha256",
-        "dependency_versions",
-        "git_sha",
-        "git_dirty_at_build",
         "pipeline_version",
-        "refresh",
-        "runtime",
-        "performance",
+        "model_generations",
+        "bundle_refresh",
+        "evaluation_classification",
+        "pretraining_overlap",
         "validation_status",
     }
     missing = sorted(required - set(manifest))
@@ -115,6 +148,8 @@ def _validate_manifest(manifest, require_clean):
         raise ValueError(f"TimesFM manifest is missing required keys: {missing}")
     if manifest["schema_version"] != BUNDLE_SCHEMA_VERSION:
         raise ValueError("unsupported TimesFM research artifact schema")
+    if manifest["pipeline_version"] != PIPELINE_VERSION:
+        raise ValueError("TimesFM artifact pipeline policy changed")
     if manifest["artifact_kind"] != "timesfm3-zero-shot-research":
         raise ValueError("TimesFM artifact kind is invalid")
     if manifest["publication_allowed"] is not True:
@@ -123,32 +158,80 @@ def _validate_manifest(manifest, require_clean):
         raise ValueError("TimesFM model execution is not complete")
     if manifest["validation_status"] != "passed":
         raise ValueError("TimesFM artifact validation did not pass")
-    if manifest["checkpoint"] != {
-        "id": CHECKPOINT_ID,
-        "revision": CHECKPOINT_REVISION,
-        "timesfm_source_revision": TIMESFM_SOURCE_REVISION,
-    }:
-        raise ValueError("TimesFM checkpoint identity or revision changed")
-    configuration = manifest["configuration"]
-    if configuration.get("context_sessions") != CONTEXT_SESSIONS:
-        raise ValueError("TimesFM context policy changed")
-    if configuration.get("quantile_levels") != list(QUANTILE_LEVELS):
-        raise ValueError("TimesFM quantile policy changed")
-    if configuration.get("evaluator") != EVALUATOR_POLICY:
-        raise ValueError("TimesFM evaluator policy changed")
-    if configuration.get("per_core_batch_size") != 16:
-        raise ValueError("TimesFM offline batch policy changed")
+    if manifest["model_policy"] != model_policy():
+        raise ValueError("TimesFM model policy changed")
+    if manifest["model_policy_sha256"] != model_policy_sha256():
+        raise ValueError("TimesFM model policy digest changed")
+    if manifest["evaluation_classification"] != "historical_replay":
+        raise ValueError("TimesFM evaluation must be classified as historical replay")
+    if manifest["pretraining_overlap"] != "unknown":
+        raise ValueError("TimesFM pretraining-overlap disclosure is invalid")
     if manifest["model_modes"] != list(MODEL_MODES):
         raise ValueError("TimesFM model-mode set changed")
     expected_tickers = list(canonical_instrument_registry()["ticker"])
     if manifest["ticker_order"] != expected_tickers:
         raise ValueError("TimesFM ticker universe is not the approved 14 ETFs")
-    if not isinstance(manifest["git_dirty_at_build"], bool):
-        raise ValueError("TimesFM git_dirty_at_build must be boolean")
-    if require_clean and manifest["git_dirty_at_build"]:
-        raise ValueError("release TimesFM artifacts require a clean Git build")
-    if re.fullmatch(r"[0-9a-fA-F]{40}", str(manifest["git_sha"])) is None:
-        raise ValueError("TimesFM git_sha must be a 40-character hexadecimal hash")
+    refresh = manifest["bundle_refresh"]
+    refresh_required = {
+        "generated_at_utc",
+        "git_sha",
+        "git_dirty_at_build",
+        "mode",
+        "reused_mode_signal_groups",
+        "generated_baseline_groups",
+        "generated_model_groups",
+    }
+    if not isinstance(refresh, dict) or not refresh_required.issubset(refresh):
+        raise ValueError("TimesFM bundle-refresh provenance is incomplete")
+    if re.fullmatch(r"[0-9a-fA-F]{40}", str(refresh["git_sha"])) is None:
+        raise ValueError("TimesFM refresh Git SHA is invalid")
+    if not isinstance(refresh["git_dirty_at_build"], bool):
+        raise ValueError("TimesFM refresh dirty flag must be boolean")
+    if require_clean and refresh["git_dirty_at_build"]:
+        raise ValueError("release TimesFM artifacts require a clean Git refresh")
+    pd.Timestamp(refresh["generated_at_utc"])
+
+    generations = manifest["model_generations"]
+    if not isinstance(generations, list) or not generations:
+        raise ValueError("TimesFM model-generation provenance is missing")
+    generation_ids = set()
+    for generation in generations:
+        required_generation = {
+            "id",
+            "generated_at_utc",
+            "git_sha",
+            "git_dirty_at_build",
+            "dependency_versions",
+            "runtime",
+            "model_policy_sha256",
+            "performance",
+        }
+        if not isinstance(generation, dict) or not required_generation.issubset(generation):
+            raise ValueError("TimesFM model-generation provenance is incomplete")
+        if generation["id"] in generation_ids:
+            raise ValueError("TimesFM model-generation IDs must be unique")
+        generation_ids.add(generation["id"])
+        if generation["model_policy_sha256"] != model_policy_sha256():
+            raise ValueError("TimesFM generation uses a different model policy")
+        if re.fullmatch(r"[0-9a-fA-F]{40}", str(generation["git_sha"])) is None:
+            raise ValueError("TimesFM generation Git SHA is invalid")
+        if not isinstance(generation["git_dirty_at_build"], bool):
+            raise ValueError("TimesFM generation dirty flag must be boolean")
+        if require_clean and generation["git_dirty_at_build"]:
+            raise ValueError("release TimesFM artifacts cannot use dirty model outputs")
+        pd.Timestamp(generation["generated_at_utc"])
+        dependencies = generation["dependency_versions"]
+        if not isinstance(dependencies, dict) or not all(
+            isinstance(dependencies.get(name), str) and dependencies[name]
+            for name in ("timesfm", "torch", "huggingface-hub", "safetensors")
+        ):
+            raise ValueError("TimesFM generation dependency provenance is incomplete")
+        runtime = generation["runtime"]
+        if not isinstance(runtime, dict) or not {
+            "device",
+            "builder_peak_rss_kb",
+        }.issubset(runtime):
+            raise ValueError("TimesFM generation runtime provenance is incomplete")
     workbench = manifest["workbench_input"]
     if not isinstance(workbench, dict) or not {
         "schema_version",
@@ -157,13 +240,11 @@ def _validate_manifest(manifest, require_clean):
         "file_sha256",
     }.issubset(workbench):
         raise ValueError("TimesFM workbench-input provenance is incomplete")
-    if not isinstance(manifest["dependency_versions"], dict):
-        raise ValueError("TimesFM dependency provenance is incomplete")
 
 
 def _validate_signals(signals, manifest):
     if list(signals.columns) != list(SIGNAL_COLUMNS):
-        raise ValueError("forecast_signals.csv columns do not match the v1 schema")
+        raise ValueError("forecast_signals.csv columns do not match the v2 schema")
     if signals.empty:
         raise ValueError("forecast_signals.csv must not be empty")
     signals = signals.copy()
@@ -221,6 +302,12 @@ def _validate_signals(signals, manifest):
         raise ValueError("forecast inference time cannot be negative")
     if not signals["context_sha256"].str.fullmatch(r"[0-9a-f]{64}").all():
         raise ValueError("forecast context checksums are invalid")
+    model_rows = signals["model_mode"] != LAST_VALUE_MODE
+    generation_ids = {item["id"] for item in manifest["model_generations"]}
+    if set(signals.loc[model_rows, "model_generation_id"]) - generation_ids:
+        raise ValueError("forecast rows reference unknown model-generation provenance")
+    if not (signals.loc[~model_rows, "model_generation_id"] == "point-baseline-v1").all():
+        raise ValueError("last-value rows must use point-baseline-v1 provenance")
 
     for point in ("execution", "period_end"):
         columns = [
@@ -302,6 +389,101 @@ def _validate_signals(signals, manifest):
     return signals.sort_values(key).reset_index(drop=True)
 
 
+def _validate_metrics(metrics, signals):
+    if list(metrics.columns) != list(METRIC_COLUMNS):
+        raise ValueError("forecast_metrics.csv columns do not match the v2 schema")
+    tickers = list(canonical_instrument_registry()["ticker"])
+    expected_keys = {
+        (mode, "overall", "ALL") for mode in MODEL_MODES
+    } | {
+        (mode, "ticker", ticker) for mode in MODEL_MODES for ticker in tickers
+    }
+    keys = set(metrics[["model_mode", "scope", "ticker"]].itertuples(index=False, name=None))
+    if keys != expected_keys or metrics.duplicated(
+        ["model_mode", "scope", "ticker"]
+    ).any():
+        raise ValueError("forecast metrics have incomplete or duplicate keys")
+    point_columns = [
+        "holding_return_mae",
+        "holding_return_rmse",
+        "period_end_price_mase",
+    ]
+    probabilistic = [
+        "mean_pinball_loss",
+        "interval_80_coverage",
+        "mean_interval_80_width",
+    ]
+    metrics = metrics.copy()
+    for column in ["observations", *point_columns, "directional_accuracy", *probabilistic, "mean_cross_sectional_rank_correlation"]:
+        metrics[column] = pd.to_numeric(metrics[column], errors="raise")
+    if metrics[["observations", *point_columns]].isna().any().any():
+        raise ValueError("forecast point metrics cannot be missing")
+    if (metrics["observations"] <= 0).any() or not np.equal(
+        metrics["observations"] % 1, 0
+    ).all():
+        raise ValueError("forecast metric observation counts are invalid")
+    if (metrics[point_columns] < 0.0).any().any() or not np.isfinite(
+        metrics[point_columns].to_numpy()
+    ).all():
+        raise ValueError("forecast point metrics are invalid")
+    baseline = metrics["model_mode"] == LAST_VALUE_MODE
+    if metrics.loc[baseline, ["directional_accuracy", *probabilistic]].notna().any().any():
+        raise ValueError("point-only last-value metrics must be N/A")
+    model = ~baseline
+    if metrics.loc[model, ["directional_accuracy", *probabilistic]].isna().any().any():
+        raise ValueError("TimesFM directional/probabilistic metrics cannot be missing")
+    if not metrics.loc[model, "directional_accuracy"].between(0.0, 1.0).all():
+        raise ValueError("directional accuracy is outside [0, 1]")
+    if not metrics.loc[model, "interval_80_coverage"].between(0.0, 1.0).all():
+        raise ValueError("interval coverage is outside [0, 1]")
+    if (metrics.loc[model, ["mean_pinball_loss", "mean_interval_80_width"]] < 0.0).any().any():
+        raise ValueError("probabilistic metrics cannot be negative")
+    if not np.isfinite(
+        metrics.loc[
+            model,
+            ["directional_accuracy", *probabilistic],
+        ].to_numpy(dtype=float)
+    ).all():
+        raise ValueError("TimesFM directional/probabilistic metrics must be finite")
+    overall_model = model & (metrics["scope"] == "overall")
+    ticker_or_baseline = ~overall_model
+    rank = metrics["mean_cross_sectional_rank_correlation"]
+    if rank.loc[overall_model].isna().any() or not rank.loc[overall_model].between(-1.0, 1.0).all():
+        raise ValueError("overall TimesFM rank correlation is invalid")
+    if rank.loc[ticker_or_baseline].notna().any():
+        raise ValueError("rank correlation is defined only for overall TimesFM rows")
+
+    expected_counts = signals.loc[signals["evaluation_status"] == "realized"].groupby(
+        ["model_mode", "ticker"]
+    ).size()
+    for row in metrics.itertuples(index=False):
+        expected = (
+            int(expected_counts.loc[row.model_mode].sum())
+            if row.scope == "overall"
+            else int(expected_counts.loc[(row.model_mode, row.ticker)])
+        )
+        if int(row.observations) != expected:
+            raise ValueError("forecast metric observations do not match realized rows")
+
+    recomputed = evaluate_forecasts(signals).sort_values(
+        ["model_mode", "scope", "ticker"]
+    ).reset_index(drop=True)
+    supplied = metrics.sort_values(["model_mode", "scope", "ticker"]).reset_index(drop=True)
+    for column in METRIC_COLUMNS:
+        if column in {"model_mode", "scope", "ticker"}:
+            if not supplied[column].equals(recomputed[column]):
+                raise ValueError("forecast metric keys do not reconcile")
+        elif not np.allclose(
+            supplied[column].to_numpy(dtype=float),
+            recomputed[column].to_numpy(dtype=float),
+            rtol=1e-12,
+            atol=1e-12,
+            equal_nan=True,
+        ):
+            raise ValueError(f"forecast metric {column} does not reconcile")
+    return metrics
+
+
 def validate_timesfm_bundle(path=DEFAULT_BUNDLE_PATH, verify_checksums=True, require_clean=True):
     path = Path(path)
     if not path.is_dir():
@@ -327,10 +509,7 @@ def validate_timesfm_bundle(path=DEFAULT_BUNDLE_PATH, verify_checksums=True, req
     }:
         raise ValueError("TimesFM artifact row counts do not reconcile")
     signals = _validate_signals(signals, manifest)
-    if list(metrics.columns) != list(METRIC_COLUMNS):
-        raise ValueError("forecast_metrics.csv columns do not match the v1 schema")
-    if metrics.empty or set(metrics["model_mode"]) != set(MODEL_MODES):
-        raise ValueError("forecast metrics do not cover every model mode")
+    metrics = _validate_metrics(metrics, signals)
     return TimesFMResearchBundle(signals=signals, metrics=metrics, manifest=manifest, path=path)
 
 
@@ -344,4 +523,95 @@ def load_timesfm_bundle(path=DEFAULT_BUNDLE_PATH, workbench_path=DEFAULT_WORKBEN
             raise ValueError(
                 f"TimesFM forecasts do not match the current workbench {filename}"
             )
+    from data.workbench import load_workbench_bundle
+
+    workbench = load_workbench_bundle(workbench_path)
+    windows = build_forecast_windows(
+        workbench.adjusted_close, workbench.manifest["generated_at_utc"]
+    )
+    expected = {
+        window.signal_date: window for window in windows
+    }
+    actual_dates = set(bundle.signals["signal_date"])
+    if actual_dates != set(expected):
+        raise ValueError("forecast signal dates do not match the exact expected windows")
+    for signal_date, rows in bundle.signals.groupby("signal_date", sort=True):
+        window = expected[signal_date]
+        if not (
+            (rows["execution_date"] == window.execution_date).all()
+            and (rows["period_end_date"] == window.period_end_date).all()
+            and (rows["context_start"] == window.context.index[0]).all()
+            and (rows["context_end"] == window.context.index[-1]).all()
+            and (rows["context_sha256"] == window.context_sha256).all()
+            and (rows["horizon_sessions"] == window.horizon).all()
+        ):
+            raise ValueError(
+                f"forecast timing or context does not match {signal_date.date()}"
+            )
+        known_rates = workbench.cash_index.loc[
+            workbench.cash_index.index < signal_date
+        ]
+        if known_rates.empty:
+            raise ValueError("forecast cash hurdle lacks a safely known rate")
+        known = known_rates.iloc[-1]
+        rate_date = pd.Timestamp(known["effective_date"])
+        days = (window.period_end_date - window.execution_date).days
+        hurdle = float(known["annual_rate"]) / 100.0 * days / 360.0
+        for ticker, ticker_rows in rows.groupby("ticker", sort=False):
+            context = window.context[ticker].to_numpy(dtype=float)
+            if not (
+                np.allclose(ticker_rows["signal_price"], context[-1])
+                and np.allclose(
+                    ticker_rows["context_mean_absolute_change"],
+                    np.mean(np.abs(np.diff(context))),
+                )
+                and (ticker_rows["known_rate_effective_date"] == rate_date).all()
+                and (ticker_rows["known_rate_source"] == known["source_series"]).all()
+                and np.allclose(ticker_rows["known_annual_rate"], known["annual_rate"])
+                and np.allclose(ticker_rows["cash_hurdle"], hurdle)
+            ):
+                raise ValueError(
+                    f"forecast inputs do not match {ticker} on {signal_date.date()}"
+                )
+            if (
+                window.execution_date in workbench.adjusted_close.index
+                and window.period_end_date in workbench.adjusted_close.index
+            ):
+                execution_price = float(
+                    workbench.adjusted_close.at[window.execution_date, ticker]
+                )
+                period_end_price = float(
+                    workbench.adjusted_close.at[window.period_end_date, ticker]
+                )
+                holding_return = period_end_price / execution_price - 1.0
+                outcomes_match = (
+                    (ticker_rows["evaluation_status"] == "realized").all()
+                    and np.allclose(
+                        ticker_rows["actual_execution_price"], execution_price
+                    )
+                    and np.allclose(
+                        ticker_rows["actual_period_end_price"], period_end_price
+                    )
+                    and np.allclose(
+                        ticker_rows["actual_holding_return"], holding_return
+                    )
+                )
+            else:
+                outcomes_match = (
+                    (ticker_rows["evaluation_status"] == "pending").all()
+                    and ticker_rows[
+                        [
+                            "actual_execution_price",
+                            "actual_period_end_price",
+                            "actual_holding_return",
+                        ]
+                    ]
+                    .isna()
+                    .all()
+                    .all()
+                )
+            if not outcomes_match:
+                raise ValueError(
+                    f"forecast outcomes do not match {ticker} on {signal_date.date()}"
+                )
     return bundle

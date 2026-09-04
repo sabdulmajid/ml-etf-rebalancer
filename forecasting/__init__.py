@@ -18,6 +18,8 @@ from forecasting.timesfm import (
     TimesFM3Runner,
     build_forecast_windows,
     last_value_forecast,
+    model_policy,
+    model_policy_sha256,
 )
 
 __all__ = [
@@ -33,4 +35,6 @@ __all__ = [
     "TimesFM3Runner",
     "build_forecast_windows",
     "last_value_forecast",
+    "model_policy",
+    "model_policy_sha256",
 ]

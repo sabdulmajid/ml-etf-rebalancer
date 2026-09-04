@@ -115,8 +115,15 @@ date strictly before the signal date; its Actual/360 return is retained as the
 cash hurdle.
 
 The committed research bundle contains TimesFM-3 multivariate and univariate
-results plus a flat last-value forecast. It is not yet rendered by Streamlit;
-that integration is deliberately isolated to a later change.
+results plus a flat, point-only last-value forecast. The last-value baseline has
+MAE, RMSE, and MASE, but no directional or probabilistic metrics: a flat point
+forecast is a tie rather than an up/down call, and repeated point values are not
+a predictive distribution. TimesFM's q10 and q90 values are marginal future
+price quantiles at each horizon; they are not an 80% interval for the derived
+holding return. The evaluation is a historical replay, not an out-of-sample
+claim, and overlap between the model's pretraining data and these dates is
+unknown. The bundle is not yet rendered by Streamlit; that integration is
+deliberately isolated to a later change.
 
 ## Methodology
 

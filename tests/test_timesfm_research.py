@@ -9,17 +9,29 @@ import pytest
 
 import build_timesfm_artifacts as builder
 from data.timesfm import load_timesfm_bundle, validate_timesfm_bundle
-from data.workbench import load_workbench_bundle
+from data.workbench import file_sha256, load_workbench_bundle
 from forecasting.evaluate import evaluate_forecasts
 from forecasting.timesfm import (
     CONTEXT_SESSIONS,
     EVALUATOR_POLICY,
+    LAST_VALUE_MODE,
     MODEL_MODES,
     MULTIVARIATE_MODE,
     QUANTILE_LEVELS,
     TimesFM3Runner,
     build_forecast_windows,
 )
+
+
+FAKE_DEPENDENCY_VERSIONS = {
+    "numpy": "2.2.6",
+    "pandas": "2.3.3",
+    "exchange-calendars": "4.13.2",
+    "timesfm": "3.0.1",
+    "torch": "2.14.0+cpu",
+    "huggingface-hub": "1.3.0",
+    "safetensors": "0.7.0",
+}
 
 
 class FakeRunner:
@@ -41,6 +53,24 @@ class FakeRunner:
 @pytest.fixture(scope="module")
 def workbench():
     return load_workbench_bundle()
+
+
+@pytest.fixture(autouse=True)
+def deterministic_dependency_versions(monkeypatch):
+    monkeypatch.setattr(
+        builder, "_dependency_versions", lambda: FAKE_DEPENDENCY_VERSIONS.copy()
+    )
+
+
+def _rewrite_manifest_checksums(output, **row_counts):
+    path = output / "manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["file_sha256"] = {
+        filename: file_sha256(output / filename)
+        for filename in ("forecast_signals.csv", "forecast_metrics.csv")
+    }
+    manifest["row_counts"].update(row_counts)
+    path.write_text(json.dumps(manifest, indent=2) + "\n")
 
 
 def test_windows_use_512_sessions_and_keep_two_pending_origins(workbench):
@@ -135,10 +165,26 @@ def test_builder_writes_realized_and_pending_rows_and_validates(
     assert set(bundle.signals["model_mode"]) == set(MODEL_MODES)
     status_counts = bundle.signals.groupby("evaluation_status").size().to_dict()
     assert status_counts == {"pending": 2 * 3 * 14, "realized": 204 * 3 * 14}
-    assert bundle.manifest["refresh"] == {
+    assert bundle.manifest["bundle_refresh"] == {
+        "generated_at_utc": "2026-08-02T12:00:00Z",
+        "git_sha": "a" * 40,
+        "git_dirty_at_build": False,
         "mode": "full",
         "reused_mode_signal_groups": 0,
-        "generated_mode_signal_groups": 206 * 3,
+        "generated_baseline_groups": 206,
+        "generated_model_groups": 206 * 2,
+    }
+    assert bundle.manifest["evaluation_classification"] == "historical_replay"
+    assert bundle.manifest["pretraining_overlap"] == "unknown"
+    assert len(bundle.manifest["model_generations"]) == 1
+    generation = bundle.manifest["model_generations"][0]
+    assert generation["generated_at_utc"] == "2026-08-02T12:00:00Z"
+    model_rows = bundle.signals["model_mode"] != LAST_VALUE_MODE
+    assert set(bundle.signals.loc[model_rows, "model_generation_id"]) == {
+        generation["id"]
+    }
+    assert set(bundle.signals.loc[~model_rows, "model_generation_id"]) == {
+        "point-baseline-v1"
     }
     latest = bundle.latest()
     assert len(latest) == 14
@@ -168,7 +214,7 @@ def test_incremental_build_reuses_matching_mode_signal_groups(
     monkeypatch.setattr(builder, "_git_dirty", lambda: True)
     output = tmp_path / "timesfm"
     initial_runner = FakeRunner()
-    builder.build_bundle(
+    initial = builder.build_bundle(
         output,
         workbench.path,
         full=True,
@@ -183,11 +229,44 @@ def test_incremental_build_reuses_matching_mode_signal_groups(
         runner=incremental_runner,
     )
     assert incremental_runner.calls == []
-    assert refreshed.manifest["refresh"] == {
-        "mode": "incremental",
-        "reused_mode_signal_groups": 206 * 3,
-        "generated_mode_signal_groups": 0,
-    }
+    refresh = refreshed.manifest["bundle_refresh"]
+    assert refresh["mode"] == "incremental"
+    assert refresh["reused_mode_signal_groups"] == 206 * 3
+    assert refresh["generated_baseline_groups"] == 0
+    assert refresh["generated_model_groups"] == 0
+    assert refreshed.manifest["model_generations"] == initial.manifest[
+        "model_generations"
+    ]
+
+
+def test_policy_digest_mismatch_forces_regeneration(tmp_path, monkeypatch, workbench):
+    monkeypatch.setattr(builder, "_git_sha", lambda: "e" * 40)
+    monkeypatch.setattr(builder, "_git_dirty", lambda: True)
+    output = tmp_path / "timesfm"
+    builder.build_bundle(
+        output,
+        workbench.path,
+        full=True,
+        allow_dirty=True,
+        runner=FakeRunner(),
+        generated_at="2026-08-02T12:00:00Z",
+    )
+    manifest_path = output / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["model_policy_sha256"] = "0" * 64
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    replacement_runner = FakeRunner()
+    regenerated = builder.build_bundle(
+        output,
+        workbench.path,
+        allow_dirty=True,
+        runner=replacement_runner,
+        generated_at="2026-08-03T12:00:00Z",
+    )
+    assert len(replacement_runner.calls) == 206 * 2
+    assert regenerated.manifest["bundle_refresh"]["mode"] == "full"
+    assert regenerated.manifest["bundle_refresh"]["reused_mode_signal_groups"] == 0
 
 
 def test_bundle_checksum_is_enforced(tmp_path, monkeypatch, workbench):
@@ -260,6 +339,11 @@ def test_evaluation_excludes_pending_rows(workbench):
             builder._forecast_rows(
                 window,
                 mode,
+                (
+                    "point-baseline-v1"
+                    if mode == LAST_VALUE_MODE
+                    else "timesfm3-test-generation"
+                ),
                 values,
                 workbench.cash_index,
                 workbench.adjusted_close,
@@ -274,6 +358,21 @@ def test_evaluation_excludes_pending_rows(workbench):
     metrics = evaluate_forecasts(frame)
     overall = metrics.loc[metrics["scope"] == "overall"]
     assert set(overall["observations"]) == {13}
+    baseline = metrics["model_mode"] == LAST_VALUE_MODE
+    assert metrics.loc[
+        baseline,
+        [
+            "directional_accuracy",
+            "mean_pinball_loss",
+            "interval_80_coverage",
+            "mean_interval_80_width",
+            "mean_cross_sectional_rank_correlation",
+        ],
+    ].isna().all().all()
+    assert metrics.loc[
+        baseline,
+        ["holding_return_mae", "holding_return_rmse", "period_end_price_mase"],
+    ].notna().all().all()
 
 
 def test_root_streamlit_requirements_exclude_optional_model_stack():
@@ -303,3 +402,134 @@ def test_manifest_does_not_accept_incomplete_model_execution(
     path.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="execution is not complete"):
         validate_timesfm_bundle(output, verify_checksums=False, require_clean=False)
+
+
+def test_loader_rejects_deleted_interior_signal(tmp_path, monkeypatch, workbench):
+    monkeypatch.setattr(builder, "_git_sha", lambda: "f" * 40)
+    monkeypatch.setattr(builder, "_git_dirty", lambda: False)
+    output = tmp_path / "timesfm"
+    builder.build_bundle(
+        output,
+        workbench.path,
+        full=True,
+        runner=FakeRunner(),
+        generated_at="2026-08-02T12:00:00Z",
+    )
+    signals = pd.read_csv(output / "forecast_signals.csv", float_precision="round_trip")
+    interior = sorted(signals["signal_date"].unique())[100]
+    signals = signals.loc[signals["signal_date"] != interior]
+    signals.to_csv(output / "forecast_signals.csv", index=False, float_format="%.17g")
+    metrics = evaluate_forecasts(signals)
+    metrics.to_csv(output / "forecast_metrics.csv", index=False, float_format="%.17g")
+    _rewrite_manifest_checksums(
+        output,
+        **{
+            "forecast_signals.csv": len(signals),
+            "forecast_metrics.csv": len(metrics),
+        },
+    )
+    with pytest.raises(ValueError, match="exact expected windows"):
+        load_timesfm_bundle(output, workbench.path)
+
+
+def test_validator_rejects_tampered_metric(tmp_path, monkeypatch, workbench):
+    monkeypatch.setattr(builder, "_git_sha", lambda: "1" * 40)
+    monkeypatch.setattr(builder, "_git_dirty", lambda: True)
+    output = tmp_path / "timesfm"
+    builder.build_bundle(
+        output,
+        workbench.path,
+        full=True,
+        allow_dirty=True,
+        runner=FakeRunner(),
+    )
+    metrics = pd.read_csv(output / "forecast_metrics.csv", float_precision="round_trip")
+    metrics.loc[0, "holding_return_mae"] += 0.01
+    metrics.to_csv(output / "forecast_metrics.csv", index=False, float_format="%.17g")
+    _rewrite_manifest_checksums(output)
+    with pytest.raises(ValueError, match="holding_return_mae does not reconcile"):
+        validate_timesfm_bundle(output, require_clean=False)
+
+    metrics = evaluate_forecasts(
+        pd.read_csv(output / "forecast_signals.csv", float_precision="round_trip")
+    )
+    model_row = metrics["model_mode"] == MULTIVARIATE_MODE
+    metrics.loc[model_row & (metrics["scope"] == "overall"), "mean_pinball_loss"] = np.nan
+    metrics.to_csv(output / "forecast_metrics.csv", index=False, float_format="%.17g")
+    _rewrite_manifest_checksums(output)
+    with pytest.raises(
+        ValueError, match="TimesFM directional/probabilistic metrics cannot be missing"
+    ):
+        validate_timesfm_bundle(output, require_clean=False)
+
+
+def test_loader_rejects_outcomes_that_do_not_match_prices(
+    tmp_path, monkeypatch, workbench
+):
+    monkeypatch.setattr(builder, "_git_sha", lambda: "3" * 40)
+    monkeypatch.setattr(builder, "_git_dirty", lambda: False)
+    output = tmp_path / "timesfm"
+    builder.build_bundle(
+        output,
+        workbench.path,
+        full=True,
+        runner=FakeRunner(),
+        generated_at="2026-08-02T12:00:00Z",
+    )
+    signals = pd.read_csv(output / "forecast_signals.csv", float_precision="round_trip")
+    target = (
+        (signals["signal_date"] == "2015-01-30")
+        & (signals["ticker"] == "SPY")
+    )
+    signals.loc[target, "actual_period_end_price"] += 1.0
+    signals.loc[target, "actual_holding_return"] = (
+        signals.loc[target, "actual_period_end_price"]
+        / signals.loc[target, "actual_execution_price"]
+        - 1.0
+    )
+    signals.to_csv(output / "forecast_signals.csv", index=False, float_format="%.17g")
+    metrics = evaluate_forecasts(signals)
+    metrics.to_csv(output / "forecast_metrics.csv", index=False, float_format="%.17g")
+    _rewrite_manifest_checksums(output)
+    with pytest.raises(ValueError, match="forecast outcomes do not match SPY"):
+        load_timesfm_bundle(output, workbench.path)
+
+
+def test_clean_refresh_cannot_launder_dirty_model_generation(
+    tmp_path, monkeypatch, workbench
+):
+    monkeypatch.setattr(builder, "_git_sha", lambda: "4" * 40)
+    monkeypatch.setattr(builder, "_git_dirty", lambda: True)
+    output = tmp_path / "timesfm"
+    builder.build_bundle(
+        output,
+        workbench.path,
+        full=True,
+        allow_dirty=True,
+        runner=FakeRunner(),
+    )
+    path = output / "manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["bundle_refresh"]["git_dirty_at_build"] = False
+    path.write_text(json.dumps(manifest, indent=2) + "\n")
+    with pytest.raises(ValueError, match="dirty model outputs"):
+        validate_timesfm_bundle(output, require_clean=True)
+
+
+def test_freshness_disables_expired_latest_target(tmp_path, monkeypatch, workbench):
+    monkeypatch.setattr(builder, "_git_sha", lambda: "2" * 40)
+    monkeypatch.setattr(builder, "_git_dirty", lambda: False)
+    bundle = builder.build_bundle(
+        tmp_path / "timesfm",
+        workbench.path,
+        full=True,
+        runner=FakeRunner(),
+        generated_at="2026-08-02T12:00:00Z",
+    )
+    scheduled = bundle.freshness("2026-08-02T13:00:00Z")
+    assert scheduled["latest_target_status"] == "scheduled"
+    assert bundle.freshness("2026-08-15")["latest_target_status"] == "current"
+    expired = bundle.freshness("2026-09-04")
+    assert expired["historical_available"] is True
+    assert expired["latest_target_status"] == "disabled"
+    assert expired["reason"] == "latest forecast holding period has expired"
