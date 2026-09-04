@@ -119,11 +119,14 @@ class TimesFMResearchBundle:
         calendar = xcals.get_calendar(
             "XNYS",
             start=execution - pd.Timedelta(days=7),
-            end=execution + pd.Timedelta(days=7),
+            end=period_end + pd.Timedelta(days=7),
         )
         execution_close = pd.Timestamp(calendar.session_close(execution))
         if execution_close.tz is not None:
             execution_close = execution_close.tz_convert("UTC").tz_localize(None)
+        period_end_close = pd.Timestamp(calendar.session_close(period_end))
+        if period_end_close.tz is not None:
+            period_end_close = period_end_close.tz_convert("UTC").tz_localize(None)
         price_as_of = pd.Timestamp(
             self.manifest["workbench_input"]["price_data_as_of"]
         )
@@ -134,10 +137,13 @@ class TimesFMResearchBundle:
                 "disabled",
                 "latest forecast was generated after its execution cutoff",
             )
-        elif as_of > period_end:
+        elif as_of > period_end_close:
             status, reason = "disabled", "latest forecast holding period has expired"
-        elif as_of < execution:
-            status, reason = "scheduled", "latest target awaits its execution date"
+        elif as_of < execution_close:
+            status, reason = (
+                "scheduled",
+                "latest target awaits its intended execution close",
+            )
         else:
             status, reason = "current", None
         return {
@@ -149,6 +155,7 @@ class TimesFMResearchBundle:
             "latest_execution_date": str(execution.date()),
             "latest_execution_cutoff_utc": execution_close.isoformat() + "Z",
             "latest_period_end_date": str(period_end.date()),
+            "latest_period_end_cutoff_utc": period_end_close.isoformat() + "Z",
             "latest_model_generated_at_utc": generation_time.isoformat() + "Z",
         }
 
