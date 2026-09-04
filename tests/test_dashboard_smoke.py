@@ -59,10 +59,14 @@ def test_streamlit_workbench_transfer_survives_rerun_and_uses_exact_target(
         "ETF Allocation Workbench",
         "ML Current Allocation",
     ]
-    info_text = " ".join(str(item.value) for item in app.info)
-    assert "1 · Choose ETFs" in info_text
-    assert "2 · Compare portfolios" in info_text
-    assert "3 · Build a rebalance plan" in info_text
+    assert any(
+        "Choose up to eight ETFs" in str(item.value) for item in app.caption
+    )
+    assert not any("1 · Choose ETFs" in str(item.value) for item in app.info)
+    assert app.toggle(key="wb_show_forecast_detail").value is False
+    assert not any(
+        "TimesFM-3 Forecast Analysis" in item.value for item in app.markdown
+    )
     explanation = app.table[0].value
     assert explanation.columns.tolist() == [
         "Asset",
@@ -74,7 +78,7 @@ def test_streamlit_workbench_transfer_survives_rerun_and_uses_exact_target(
     assert explanation["Reason"].str.len().gt(0).all()
     app.checkbox(key="wb_current_enabled").set_value(True).run()
     assert any(
-        "add Current Mix — monthly rebalanced" in item.value
+        "Current Mix resets your entered weights monthly" in item.value
         for item in app.caption
     )
     app.button(key="wb_send_to_portfolio_lab").click().run()
@@ -167,13 +171,13 @@ def test_streamlit_selection_reconciliation_and_invalid_current_controls(monkeyp
 
     app.number_input(key=f"wb_current_pct_{CASH_ASSET}").set_value(90.0).run()
     comparison = next(
-        widget for widget in app.multiselect if widget.label == "Comparison series"
+        widget for widget in app.multiselect if widget.label == "Portfolios to compare"
     )
     assert comparison_selector_label(CURRENT_MIX_LABEL) not in comparison.options
     assert app.button(key="wb_send_to_portfolio_lab_disabled").disabled
     assert "portfolio_lab_transfer" not in app.session_state
     assert any("Current weights are invalid" in warning.value for warning in app.warning)
-    assert any("adjust the current-weight total" in item.value for item in app.info)
+    assert any("adjust the current-weight total" in item.value for item in app.caption)
     assert not app.exception
 
 
@@ -182,11 +186,11 @@ def test_late_forecast_history_is_visible_but_target_is_not_transferable(monkeyp
     app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=45).run()
 
     comparison = next(
-        widget for widget in app.multiselect if widget.label == "Comparison series"
+        widget for widget in app.multiselect if widget.label == "Portfolios to compare"
     )
     app.checkbox(key="wb_current_enabled").set_value(True).run()
     comparison = next(
-        widget for widget in app.multiselect if widget.label == "Comparison series"
+        widget for widget in app.multiselect if widget.label == "Portfolios to compare"
     )
     target = app.selectbox(key="wb_authoritative_target")
     assert comparison_selector_label(VOL_FORECAST_LABEL) in comparison.options
@@ -200,8 +204,9 @@ def test_late_forecast_history_is_visible_but_target_is_not_transferable(monkeyp
     assert any(
         "outside the current rebalance window" in item.value
         and "TimesFM" in item.value
-        for item in app.info
+        for item in app.caption
     )
+    app.toggle(key="wb_show_forecast_detail").set_value(True).run()
     assert any(
         "forecast range" in expander.label.lower()
         for expander in app.expander
@@ -249,7 +254,7 @@ st.write('base-and-ml-sentinel')
     assert any("forecast research is temporarily unavailable" in item.value.lower()
                for item in app.info)
     comparison = next(
-        widget for widget in app.multiselect if widget.label == "Comparison series"
+        widget for widget in app.multiselect if widget.label == "Portfolios to compare"
     )
     assert comparison_selector_label(VOL_BALANCED_LABEL) in comparison.options
     assert comparison_selector_label(VOL_FORECAST_LABEL) not in comparison.options
@@ -389,10 +394,10 @@ def test_comparison_defaults_follow_selected_etf_tuple(monkeypatch):
     monkeypatch.setenv("ETF_WORKBENCH_TEST_AS_OF", "2026-09-05")
     app = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=45).run()
 
-    initial = next(widget for widget in app.multiselect if widget.label == "Comparison series")
+    initial = next(widget for widget in app.multiselect if widget.label == "Portfolios to compare")
     initial_default = list(initial.value)
     app.multiselect(key="wb_selected_etfs").set_value(["SPY"]).run()
-    one = next(widget for widget in app.multiselect if widget.label == "Comparison series")
+    one = next(widget for widget in app.multiselect if widget.label == "Portfolios to compare")
     assert one.value == [
         "Volatility Balanced + Forecast",
         "Buy & Hold",
@@ -400,12 +405,12 @@ def test_comparison_defaults_follow_selected_etf_tuple(monkeypatch):
     ]
     assert app.session_state["wb_comparisons_by_selection"]["SPY"] == one.value
     assert any(
-        "keeps holding the ETF" in item.value
+        "With one ETF" in item.value
         and "filtered approaches switch between that ETF" in item.value
-        for item in app.info
+        for item in app.caption
     )
     app.multiselect(key="wb_selected_etfs").set_value(["SPY", "IEF", "GLD"]).run()
-    restored = next(widget for widget in app.multiselect if widget.label == "Comparison series")
+    restored = next(widget for widget in app.multiselect if widget.label == "Portfolios to compare")
     assert restored.value == initial_default
     assert not app.exception
 
@@ -431,7 +436,7 @@ st.write('ML sentinel remains available')
     assert any(text in message.value for message in messages)
     assert any("ML sentinel remains available" in item.value for item in app.markdown)
     if element == "error":
-        assert not any(widget.label == "Comparison series" for widget in app.multiselect)
+        assert not any(widget.label == "Portfolios to compare" for widget in app.multiselect)
     assert not app.exception
 
 
