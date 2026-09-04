@@ -1,15 +1,13 @@
 {
-  "schema_version": "timesfm-research-bundle-v1",
-  "generated_at_utc": "2026-09-04T04:58:20.579558Z",
+  "schema_version": "timesfm-research-bundle-v2",
   "artifact_kind": "timesfm3-zero-shot-research",
   "publication_allowed": true,
   "model_execution_status": "complete",
-  "checkpoint": {
-    "id": "google/timesfm-3.0-pytorch",
-    "revision": "43046b85ec22d584a13f8098c2ed39c889e129c2",
-    "timesfm_source_revision": "aa480150652811e732d87a3c5344b235234104e3"
-  },
-  "configuration": {
+  "model_policy": {
+    "policy_version": "timesfm3-zero-shot-policy-v2",
+    "checkpoint_id": "google/timesfm-3.0-pytorch",
+    "checkpoint_revision": "43046b85ec22d584a13f8098c2ed39c889e129c2",
+    "timesfm_source_revision": "aa480150652811e732d87a3c5344b235234104e3",
     "context_sessions": 512,
     "universe_mode": "all-14-etfs-jointly",
     "covariates": "none",
@@ -38,6 +36,7 @@
     "primary_mode": "timesfm3_multivariate",
     "per_core_batch_size": 16
   },
+  "model_policy_sha256": "faed84a2ddc391e4b957c6686ea115e9465896d2bf31a9d85ac07743b4f17efd",
   "model_modes": [
     "last_value",
     "timesfm3_univariate",
@@ -72,54 +71,61 @@
   },
   "forecast_signal_start": "2009-06-30",
   "forecast_signal_end": "2026-07-31",
-  "dependency_versions": {
-    "numpy": "2.2.6",
-    "pandas": "2.3.3",
-    "exchange-calendars": "4.13.2",
-    "timesfm": "3.0.1",
-    "torch": "2.14.0+cpu",
-    "huggingface-hub": "1.30.0",
-    "safetensors": "0.8.0"
-  },
-  "git_sha": "18ecb10444dbe992c33629223651c36f01db34bb",
-  "git_dirty_at_build": false,
-  "pipeline_version": "timesfm-artifact-builder-v1",
-  "runtime": {
-    "device": "cpu",
-    "builder_peak_rss_kb": 2915180
-  },
-  "performance": {
-    "last_value": {
-      "forecast_origins": 206,
-      "total_inference_seconds": 0.0,
-      "median_inference_seconds": 0.0,
-      "maximum_inference_seconds": 0.0
-    },
-    "timesfm3_multivariate": {
-      "forecast_origins": 206,
-      "total_inference_seconds": 265.8876891020045,
-      "median_inference_seconds": 1.21723553699849,
-      "maximum_inference_seconds": 1.97249365200696
-    },
-    "timesfm3_univariate": {
-      "forecast_origins": 206,
-      "total_inference_seconds": 305.2053126630634,
-      "median_inference_seconds": 1.41622044350515,
-      "maximum_inference_seconds": 2.07102563499939
+  "pipeline_version": "timesfm-artifact-builder-v2",
+  "model_generations": [
+    {
+      "id": "timesfm3-20260904T045550Z-7520fa6",
+      "generated_at_utc": "2026-09-04T04:55:50.413716Z",
+      "git_sha": "7520fa6b2b482cabf8a7ffd5d0422a110c231367",
+      "git_dirty_at_build": false,
+      "dependency_versions": {
+        "numpy": "2.2.6",
+        "pandas": "2.3.3",
+        "exchange-calendars": "4.13.2",
+        "timesfm": "3.0.1",
+        "torch": "2.14.0+cpu",
+        "huggingface-hub": "1.30.0",
+        "safetensors": "0.8.0"
+      },
+      "runtime": {
+        "device": "cpu",
+        "builder_peak_rss_kb": 2915180
+      },
+      "model_policy_sha256": "faed84a2ddc391e4b957c6686ea115e9465896d2bf31a9d85ac07743b4f17efd",
+      "performance": {
+        "timesfm3_multivariate": {
+          "forecast_origins": 206,
+          "total_inference_seconds": 265.8876891020045,
+          "median_inference_seconds": 1.21723553699849,
+          "maximum_inference_seconds": 1.97249365200696
+        },
+        "timesfm3_univariate": {
+          "forecast_origins": 206,
+          "total_inference_seconds": 305.2053126630634,
+          "median_inference_seconds": 1.41622044350515,
+          "maximum_inference_seconds": 2.07102563499939
+        }
+      }
     }
-  },
-  "refresh": {
-    "mode": "incremental",
+  ],
+  "bundle_refresh": {
+    "generated_at_utc": "2026-09-04T05:24:57.747611Z",
+    "git_sha": "667e377e991d13a67c0d30e0b5b5d777126a9b42",
+    "git_dirty_at_build": false,
+    "mode": "metadata_migration",
     "reused_mode_signal_groups": 618,
-    "generated_mode_signal_groups": 0
+    "generated_baseline_groups": 0,
+    "generated_model_groups": 0
   },
+  "evaluation_classification": "historical_replay",
+  "pretraining_overlap": "unknown",
   "validation_status": "passed",
   "row_counts": {
     "forecast_signals.csv": 8652,
     "forecast_metrics.csv": 45
   },
   "file_sha256": {
-    "forecast_signals.csv": "d6049ad1018d34e0dffa258d867cca6a67fd2c571e819674f07391846d1c7dd7",
-    "forecast_metrics.csv": "38a1dcaf0829eada745d6138983283154be4f332135c7b4f48bf501e33794b87"
+    "forecast_signals.csv": "b613faffcb201cdb250b2fd8111ac11e1afb7e7aa1086ec063eb8d99cac8adbe",
+    "forecast_metrics.csv": "e2d715f94d3daa5a6d00a5e06a9fe92102254b6b99544b8c734e74e62a36939f"
   }
 }
