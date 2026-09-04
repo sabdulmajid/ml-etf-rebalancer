@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 import datetime as dt
 from copy import deepcopy
+from io import StringIO
 import json
 import shutil
 
@@ -18,6 +19,7 @@ from dashboard.workbench import (
     VOL_BALANCED_LABEL,
     VOL_FORECAST_LABEL,
     VOL_TREND_LABEL,
+    comparison_selector_label,
 )
 from data.timesfm import load_timesfm_bundle
 from data.workbench import load_workbench_bundle
@@ -167,7 +169,7 @@ def test_streamlit_selection_reconciliation_and_invalid_current_controls(monkeyp
     comparison = next(
         widget for widget in app.multiselect if widget.label == "Comparison series"
     )
-    assert CURRENT_MIX_LABEL not in comparison.options
+    assert comparison_selector_label(CURRENT_MIX_LABEL) not in comparison.options
     assert app.button(key="wb_send_to_portfolio_lab_disabled").disabled
     assert "portfolio_lab_transfer" not in app.session_state
     assert any("Current weights are invalid" in warning.value for warning in app.warning)
@@ -183,7 +185,8 @@ def test_late_forecast_history_is_visible_but_target_is_not_transferable(monkeyp
         widget for widget in app.multiselect if widget.label == "Comparison series"
     )
     target = app.selectbox(key="wb_authoritative_target")
-    assert VOL_FORECAST_LABEL in comparison.options
+    assert comparison_selector_label(VOL_FORECAST_LABEL) in comparison.options
+    assert VOL_FORECAST_LABEL in comparison.value
     assert VOL_FORECAST_LABEL not in target.options
     assert VOL_BALANCED_LABEL not in target.options
     assert VOL_TREND_LABEL not in target.options
@@ -223,8 +226,8 @@ st.write('base-and-ml-sentinel')
     comparison = next(
         widget for widget in app.multiselect if widget.label == "Comparison series"
     )
-    assert "Volatility Balanced" in comparison.options
-    assert VOL_FORECAST_LABEL not in comparison.options
+    assert comparison_selector_label(VOL_BALANCED_LABEL) in comparison.options
+    assert comparison_selector_label(VOL_FORECAST_LABEL) not in comparison.options
     assert any("base-and-ml-sentinel" in item.value for item in app.markdown)
 
 
@@ -260,6 +263,10 @@ render_portfolio_lab()
 
     transfer = deepcopy(app.session_state["portfolio_lab_transfer"])
     assert transfer["strategy"] == VOL_FORECAST_LABEL
+    transferred_download = pd.read_csv(StringIO(transfer["target_csv"]))
+    assert transferred_download["strategy"].unique().tolist() == [
+        VOL_FORECAST_LABEL
+    ]
     assert transfer["execution_status"] == "current"
     assert transfer["model_generation_id"] == latest_generation_id
     assert transfer["model_generated_at_utc"] == "2026-09-01T19:00:00Z"
@@ -367,6 +374,7 @@ def test_comparison_defaults_follow_selected_etf_tuple(monkeypatch):
         "Buy & Hold",
         "Cash — U.S. overnight-rate proxy",
     ]
+    assert app.session_state["wb_comparisons_by_selection"]["SPY"] == one.value
     assert any(
         "keeps holding the ETF" in item.value
         and "filtered approaches switch between that ETF" in item.value

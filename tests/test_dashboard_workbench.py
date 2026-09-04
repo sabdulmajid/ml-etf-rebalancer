@@ -500,6 +500,7 @@ def test_downloads_exactly_reconcile_displayed_results_and_targets(bundle, monke
 
     target = latest_target_download(bundle, study, VOL_TREND_LABEL)
     assert "displayed_history_through" not in target.columns
+    assert target["strategy"].unique().tolist() == [VOL_TREND_LABEL]
     assert target["target_weight"].sum() == pytest.approx(1.0)
     assert target.loc[target["asset"] == CASH_ASSET, "asset_type"].item() == "analytical_cash"
     assert target["signal_as_of"].nunique() == 1
