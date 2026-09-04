@@ -1,6 +1,6 @@
 {
   "schema_version": "timesfm-research-bundle-v1",
-  "generated_at_utc": "2026-09-04T04:56:44.615061Z",
+  "generated_at_utc": "2026-09-04T04:58:07.541575Z",
   "artifact_kind": "timesfm3-zero-shot-research",
   "publication_allowed": true,
   "model_execution_status": "complete",
@@ -80,7 +80,7 @@
     "huggingface-hub": "1.30.0",
     "safetensors": "0.8.0"
   },
-  "git_sha": "28873b8ed2651f632b2c21080f46b0a57a6a4e4d",
+  "git_sha": "cff07d380320b1b78b9706157f0041c5bf039458",
   "git_dirty_at_build": false,
   "pipeline_version": "timesfm-artifact-builder-v1",
   "runtime": {
@@ -118,7 +118,7 @@
     "forecast_metrics.csv": 45
   },
   "file_sha256": {
-    "forecast_signals.csv": "3d277c9b66f0b75938a69335c56abccaa3c81403ccef67ef41fae0f03b31a904",
-    "forecast_metrics.csv": "9b2550fb5795b4b06830463ed0eb107bd5840cad068fa1d7720d1becd1d98337"
+    "forecast_signals.csv": "d6049ad1018d34e0dffa258d867cca6a67fd2c571e819674f07391846d1c7dd7",
+    "forecast_metrics.csv": "38a1dcaf0829eada745d6138983283154be4f332135c7b4f48bf501e33794b87"
   }
 }
